@@ -4,7 +4,7 @@
 
 ### 1 — Code changes
 
-Edit `LoginTimer.cs`, test with `restart.bat` (kill → rebuild → restart).
+Edit `src/LoginTimer.cs`, test with `scripts\restart.bat` (kill → rebuild → restart).
 
 ### 2 — Bump the version
 
@@ -22,10 +22,10 @@ WiX version format is always **four parts** (`major.minor.patch.build`).
 
 ```bat
 # 1. Compile EXE
-build.bat
+scripts\build.bat
 
 # 2. Build MSI  (requires WiX Toolset v3.x)
-build_msi.bat
+scripts\build_msi.bat
 ```
 
 Check `build.log` if EXE build fails. MSI errors are printed to the console by candle/light.
@@ -53,26 +53,31 @@ git push origin main --tags
 ## Project structure
 
 ```
-LoginTimer.cs          Main application (single file)
-  ├─ Program            Entry point, mutex, error logging
-  ├─ POINT/RECT/        Win32 structs for P/Invoke
-  │   WINDOWPLACEMENT
-  ├─ WindowHelper       Per-monitor active-window detection (Z-order walk)
-  ├─ AppTracker         Per-app time storage (apps.csv)
-  ├─ DayData            Login-time CSV storage (data.csv)
-  ├─ TrayApp            ApplicationContext: tray icon, timers, session events
-  ├─ OverlayForm        Floating always-on-top widget
-  └─ HistoryForm        Statistics window (tabs: days / weeks / months / apps)
+src/
+  └─ LoginTimer.cs       Main application (single file)
+       ├─ Program            Entry point, mutex, error logging
+       ├─ POINT/RECT/        Win32 structs for P/Invoke
+       │   WINDOWPLACEMENT
+       ├─ WindowHelper       Per-monitor active-window detection (Z-order walk)
+       ├─ AppTracker         Per-app time storage (apps.csv)
+       ├─ DayData            Login-time CSV storage (data.csv)
+       ├─ TrayApp            ApplicationContext: tray icon, timers, session events
+       ├─ OverlayForm        Floating always-on-top widget
+       ├─ AnchorForm         Hidden window for Restart Manager / installer detection
+       └─ HistoryForm        Statistics window (tabs: days / weeks / months / apps)
 
-build.bat              Compiles LoginTimer.exe via built-in csc.exe
-restart.bat            kill → build → start (dev workflow)
-build_msi.bat          Builds LoginTimer.msi via WiX candle + light
-LoginTimer.wxs         WiX installer definition
-license.rtf            License text displayed in the MSI wizard
-Installer.cs           Lightweight standalone installer (no WiX)
-install.bat            Compiles and runs Installer.exe
+installer/
+  ├─ LoginTimer.wxs      WiX MSI installer definition
+  ├─ license.rtf         License text displayed in the MSI wizard
+  └─ Installer.cs        Lightweight standalone installer (no WiX required)
 
-docs/screenshots/      PNG screenshots used in README.md
+scripts/
+  ├─ build.bat           Compile LoginTimer.exe via built-in csc.exe
+  ├─ build_msi.bat       Build LoginTimer.msi via WiX candle + light
+  ├─ install.bat         Compile and run the lightweight installer
+  └─ restart.bat         kill → build → start  (dev workflow)
+
+docs/screenshots/        PNG screenshots used in README.md
 ```
 
 ---

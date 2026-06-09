@@ -1,16 +1,10 @@
-# Build outputs
+# Compiled binaries
 *.exe
 *.msi
+
+# WiX intermediate files
 *.wixobj
 *.wixpdb
 
-# Build logs
+# Build / install logs
 *.log
-
-# Python leftovers (unused)
-login_timer.py
-requirements.txt
-
-# WiX intermediate
-LoginTimer.wixobj
-LoginTimer.wixpdb

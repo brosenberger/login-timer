@@ -74,7 +74,7 @@ To autostart: drop a shortcut into `shell:startup`.
 No Visual Studio required — the build uses the C# compiler that ships with Windows.
 
 ```bat
-build.bat
+scripts\build.bat
 ```
 
 Output: `LoginTimer.exe`
@@ -84,7 +84,7 @@ Output: `LoginTimer.exe`
 Requires [WiX Toolset v3.x](https://github.com/wixtoolset/wix3/releases/latest) (one-time install, ~30 MB).
 
 ```bat
-build_msi.bat
+scripts\build_msi.bat
 ```
 
 Output: `LoginTimer.msi` — self-contained, no prerequisites on the target machine.
