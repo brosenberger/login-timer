@@ -822,8 +822,22 @@ namespace LoginTimer
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            if (e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; Hide(); }
-            else { _topmostTimer.Stop(); base.OnFormClosing(e); }
+            if (e.CloseReason == CloseReason.UserClosing)
+            {
+                // User clicked X on the overlay: hide, keep running.
+                e.Cancel = true;
+                Hide();
+            }
+            else
+            {
+                // External close: installer (WixCloseApplications), Task Manager,
+                // Windows shutdown.  Cancel the individual form close and request
+                // a full Application.Exit() instead so TrayApp.OnExit() runs first
+                // and saves position + data before the process terminates.
+                e.Cancel = true;
+                _topmostTimer.Stop();
+                Application.Exit();
+            }
         }
     }
 
