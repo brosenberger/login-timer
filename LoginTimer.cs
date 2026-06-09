@@ -403,16 +403,18 @@ namespace LoginTimer
     class TrayApp : ApplicationContext
     {
         readonly string _dataPath;
-        DayData    _data;
-        AppTracker _appTracker;
-        DateTime?  _segStart;
-        NotifyIcon _tray;
+        DayData     _data;
+        AppTracker  _appTracker;
+        DateTime?   _segStart;
+        NotifyIcon  _tray;
         System.Windows.Forms.Timer _timer;       // 30 s: checkpoint + icon update
         System.Windows.Forms.Timer _appTimer;    // 10 s: per-monitor app tracking
-        Icon   _currentIcon;
-        Bitmap _iconBitmap;  // must stay alive while icon handle is in use
+        Icon        _currentIcon;
+        Bitmap      _iconBitmap;  // must stay alive while icon handle is in use
         OverlayForm _overlay;
+        AnchorForm  _anchor;      // hidden window visible to Restart Manager / WixCloseApplications
         System.Threading.SynchronizationContext _syncCtx; // marshal back to UI thread
+        bool        _exiting;     // guard against re-entrant OnExit calls
 
         public TrayApp()
         {
@@ -431,6 +433,11 @@ namespace LoginTimer
             // _syncCtx is captured lazily on the first timer tick (see OnAppTick),
             // because SynchronizationContext.Current is null here — Application.Run
             // installs the WinForms context only after the constructor returns.
+
+            // Hidden anchor window: makes Restart Manager and WixCloseApplications
+            // able to identify LoginTimer by name and send a graceful WM_CLOSE.
+            _anchor = new AnchorForm();
+            _anchor.Show();
 
             _tray = new NotifyIcon();
             _tray.ContextMenuStrip = BuildMenu();
@@ -659,13 +666,28 @@ namespace LoginTimer
 
         void OnExit(object sender, EventArgs e)
         {
+            if (_exiting) return;
+            _exiting = true;
+
             CommitSegment();
             _timer.Stop();
             _appTimer.Stop();
             SystemEvents.SessionSwitch -= OnSessionSwitch;
             _tray.Visible = false;
             _tray.Dispose();
-            if (_overlay != null) { _overlay.SavePositionPublic(); _overlay.Dispose(); }
+            if (_overlay != null)
+            {
+                _overlay.AllowClose();
+                _overlay.SavePositionPublic();
+                _overlay.Dispose();
+                _overlay = null;
+            }
+            if (_anchor != null)
+            {
+                _anchor.AllowClose();
+                _anchor.Dispose();
+                _anchor = null;
+            }
             if (_currentIcon != null) _currentIcon.Dispose();
             if (_iconBitmap  != null) _iconBitmap.Dispose();
         }
@@ -697,8 +719,11 @@ namespace LoginTimer
         public event EventHandler RequestHistory;
 
         bool _dragging;
+        bool _allowClose;
         Point _dragStart;
         System.Windows.Forms.Timer _topmostTimer;
+
+        public void AllowClose() { _allowClose = true; }
 
         public OverlayForm()
         {
@@ -822,6 +847,13 @@ namespace LoginTimer
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
+            if (_allowClose)
+            {
+                // OnExit already ran — let the form close normally.
+                _topmostTimer.Stop();
+                base.OnFormClosing(e);
+                return;
+            }
             if (e.CloseReason == CloseReason.UserClosing)
             {
                 // User clicked X on the overlay: hide, keep running.
@@ -836,6 +868,39 @@ namespace LoginTimer
                 // and saves position + data before the process terminates.
                 e.Cancel = true;
                 _topmostTimer.Stop();
+                Application.Exit();
+            }
+        }
+    }
+
+    // ── Hidden anchor window ─────────────────────────────────────────────────
+    // Gives Restart Manager and WixCloseApplications a named, non-toolwindow
+    // handle to identify this process and send graceful WM_CLOSE signals.
+    // Visually invisible: 1×1 black pixel, TransparencyKey = black, no taskbar.
+    class AnchorForm : Form
+    {
+        bool _allowClose;
+        public void AllowClose() { _allowClose = true; }
+
+        public AnchorForm()
+        {
+            Text            = "LoginTimer";
+            ShowInTaskbar   = false;
+            FormBorderStyle = FormBorderStyle.None;
+            Size            = new Size(1, 1);
+            BackColor       = Color.Black;
+            TransparencyKey = Color.Black; // fully transparent, click-through
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            if (_allowClose) { base.OnFormClosing(e); return; }
+            if (e.CloseReason == CloseReason.UserClosing)
+                e.Cancel = true; // shouldn't happen, but guard it
+            else
+            {
+                // Installer / Task Manager / Windows shutdown → clean exit.
+                e.Cancel = true;
                 Application.Exit();
             }
         }
