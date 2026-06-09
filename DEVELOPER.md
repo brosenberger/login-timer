@@ -83,19 +83,6 @@ docs/screenshots/      PNG screenshots used in README.md
 
 ---
 
-## TODOs / ideas for next release
-
-- [ ] **Configurable work-hours goal** — show progress bar in widget (e.g. 8h = 100%)
-- [ ] **Tray icon color states** — green = on track, orange = below goal, red = far behind
-- [ ] **Export** — CSV or Excel export button in history window
-- [ ] **Multi-monitor widget** — remember which monitor the widget was on, restore to correct one after resolution change
-- [ ] **Settings dialog** — configure: work hours goal, widget font size, opacity, update interval
-- [ ] **Installer: autostart toggle** — let user enable/disable autostart from within the app (registry `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`)
-- [ ] **MSI: auto-launch after install** — add WixUtilExtension to support the "start after install" checkbox in the finish dialog
-- [ ] **Version displayed in About** — show version string in tray tooltip or about dialog
-
----
-
 ## Known constraints
 
 - Built with **C# 5** (`csc.exe` from .NET Framework 4.x) — no expression-bodied members, no string interpolation, no numeric literal separators.
