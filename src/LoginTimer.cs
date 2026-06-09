@@ -212,6 +212,120 @@ namespace LoginTimer
         }
     }
 
+    // ── Color scheme (persisted to colors.ini) ────────────────────────────────
+    class ColorScheme
+    {
+        public Color IconBackground  { get; set; }
+        public Color AccentGreen     { get; set; }
+        public Color OverlayBg       { get; set; }
+        public Color HistoryBg       { get; set; }
+        public Color GridBg          { get; set; }
+        public Color GridLines       { get; set; }
+        public Color HeaderBg        { get; set; }
+        public Color CellText        { get; set; }
+        public Color HeaderText      { get; set; }
+        public Color FormText        { get; set; }
+        public Color PlaceholderText { get; set; }
+        public Color SelectionBg     { get; set; }
+        public Color NegativeRed     { get; set; }
+
+        public static ColorScheme Default()
+        {
+            return new ColorScheme
+            {
+                IconBackground  = Color.FromArgb(22,  22,  22),
+                AccentGreen     = Color.FromArgb(0,  215,  85),
+                OverlayBg       = Color.FromArgb(18,  18,  18),
+                HistoryBg       = Color.FromArgb(28,  28,  28),
+                GridBg          = Color.FromArgb(35,  35,  35),
+                GridLines       = Color.FromArgb(55,  55,  55),
+                HeaderBg        = Color.FromArgb(45,  45,  45),
+                CellText        = Color.FromArgb(210, 210, 210),
+                HeaderText      = Color.FromArgb(160, 160, 160),
+                FormText        = Color.FromArgb(200, 200, 200),
+                PlaceholderText = Color.FromArgb(120, 120, 120),
+                SelectionBg     = Color.FromArgb(55,  100,  70),
+                NegativeRed     = Color.FromArgb(220,  80,  60),
+            };
+        }
+
+        static readonly string _path = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "LoginTimer", "colors.ini");
+
+        static string ColorToStr(Color c) { return c.R + "," + c.G + "," + c.B; }
+
+        static Color StrToColor(string s, Color fallback)
+        {
+            try
+            {
+                var p = s.Split(',');
+                if (p.Length == 3)
+                    return Color.FromArgb(int.Parse(p[0].Trim()),
+                                          int.Parse(p[1].Trim()),
+                                          int.Parse(p[2].Trim()));
+            }
+            catch { }
+            return fallback;
+        }
+
+        public void Save()
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(_path));
+                var sb = new StringBuilder();
+                sb.AppendLine("IconBackground="  + ColorToStr(IconBackground));
+                sb.AppendLine("AccentGreen="     + ColorToStr(AccentGreen));
+                sb.AppendLine("OverlayBg="       + ColorToStr(OverlayBg));
+                sb.AppendLine("HistoryBg="       + ColorToStr(HistoryBg));
+                sb.AppendLine("GridBg="          + ColorToStr(GridBg));
+                sb.AppendLine("GridLines="       + ColorToStr(GridLines));
+                sb.AppendLine("HeaderBg="        + ColorToStr(HeaderBg));
+                sb.AppendLine("CellText="        + ColorToStr(CellText));
+                sb.AppendLine("HeaderText="      + ColorToStr(HeaderText));
+                sb.AppendLine("FormText="        + ColorToStr(FormText));
+                sb.AppendLine("PlaceholderText=" + ColorToStr(PlaceholderText));
+                sb.AppendLine("SelectionBg="     + ColorToStr(SelectionBg));
+                sb.AppendLine("NegativeRed="     + ColorToStr(NegativeRed));
+                File.WriteAllText(_path, sb.ToString());
+            }
+            catch { }
+        }
+
+        public static ColorScheme Load()
+        {
+            var d = Default();
+            if (!File.Exists(_path)) return d;
+            try
+            {
+                var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var line in File.ReadAllLines(_path))
+                {
+                    var idx = line.IndexOf('=');
+                    if (idx > 0)
+                        map[line.Substring(0, idx).Trim()] = line.Substring(idx + 1).Trim();
+                }
+                string v;
+                if (map.TryGetValue("IconBackground",  out v)) d.IconBackground  = StrToColor(v, d.IconBackground);
+                if (map.TryGetValue("AccentGreen",     out v)) d.AccentGreen     = StrToColor(v, d.AccentGreen);
+                if (map.TryGetValue("OverlayBg",       out v)) d.OverlayBg       = StrToColor(v, d.OverlayBg);
+                if (map.TryGetValue("HistoryBg",       out v)) d.HistoryBg       = StrToColor(v, d.HistoryBg);
+                if (map.TryGetValue("GridBg",          out v)) d.GridBg          = StrToColor(v, d.GridBg);
+                if (map.TryGetValue("GridLines",       out v)) d.GridLines       = StrToColor(v, d.GridLines);
+                if (map.TryGetValue("HeaderBg",        out v)) d.HeaderBg        = StrToColor(v, d.HeaderBg);
+                if (map.TryGetValue("CellText",        out v)) d.CellText        = StrToColor(v, d.CellText);
+                if (map.TryGetValue("HeaderText",      out v)) d.HeaderText      = StrToColor(v, d.HeaderText);
+                if (map.TryGetValue("FormText",        out v)) d.FormText        = StrToColor(v, d.FormText);
+                if (map.TryGetValue("PlaceholderText", out v)) d.PlaceholderText = StrToColor(v, d.PlaceholderText);
+                if (map.TryGetValue("SelectionBg",     out v)) d.SelectionBg     = StrToColor(v, d.SelectionBg);
+                if (map.TryGetValue("NegativeRed",     out v)) d.NegativeRed     = StrToColor(v, d.NegativeRed);
+            }
+            catch { }
+            return d;
+        }
+    }
+
     // ── Per-app time storage ──────────────────────────────────────────────────
     class AppTracker
     {
@@ -415,9 +529,12 @@ namespace LoginTimer
         AnchorForm  _anchor;      // hidden window visible to Restart Manager / WixCloseApplications
         System.Threading.SynchronizationContext _syncCtx; // marshal back to UI thread
         bool        _exiting;     // guard against re-entrant OnExit calls
+        ColorScheme _colors;
 
         public TrayApp()
         {
+            _colors = ColorScheme.Load();
+
             _dataPath = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 "LoginTimer", "data.csv");
@@ -447,7 +564,7 @@ namespace LoginTimer
             UpdateIcon();
             _tray.Visible = true;
 
-            _overlay = new OverlayForm();
+            _overlay = new OverlayForm(_colors);
             _overlay.ContextMenuStrip = _tray.ContextMenuStrip;
             _overlay.RequestHistory += delegate { ShowHistory(); };
             _overlay.Show();
@@ -598,11 +715,11 @@ namespace LoginTimer
             var bmp = new Bitmap(S, S);
             using (var g = Graphics.FromImage(bmp))
             {
-                g.Clear(Color.FromArgb(22, 22, 22));
+                g.Clear(_colors.IconBackground);
                 g.TextRenderingHint = TextRenderingHint.SingleBitPerPixelGridFit;
 
                 var parts = label.Split(':');
-                var green = new SolidBrush(Color.FromArgb(0, 215, 85));
+                var green = new SolidBrush(_colors.AccentGreen);
                 var sfC   = new StringFormat();
                 sfC.Alignment     = StringAlignment.Center;
                 sfC.LineAlignment = StringAlignment.Center;
@@ -629,6 +746,7 @@ namespace LoginTimer
             overlayItem.Checked = true;
             overlayItem.Click  += OnToggleOverlay;
             m.Items.Add(overlayItem);
+            m.Items.Add("Farben…", null, OnFarben);
             m.Items.Add(new ToolStripSeparator());
             m.Items.Add("Beenden", null, OnQuit);
             return m;
@@ -649,6 +767,25 @@ namespace LoginTimer
 
         void OnQuit(object sender, EventArgs e) { Application.Exit(); }
 
+        void OnFarben(object sender, EventArgs e)
+        {
+            using (var dlg = new ColorSettingsForm(_colors))
+            {
+                if (dlg.ShowDialog() != DialogResult.OK) return;
+
+                _colors = dlg.Result;
+                _colors.Save();
+                UpdateIcon();
+                _overlay.ApplyColors(_colors);
+
+                // Close any open history windows; they'll reopen with new colors.
+                // Snapshot first — Close() modifies the OpenForms collection.
+                var toClose = Application.OpenForms.Cast<Form>()
+                                         .OfType<HistoryForm>().ToList();
+                foreach (var hf in toClose) hf.Close();
+            }
+        }
+
         void ShowHistory()
         {
             var snap = new Dictionary<DateTime, double>();
@@ -661,7 +798,9 @@ namespace LoginTimer
             }
 
             var appSnap = _appTracker.GetDay(DateTime.Today);
-            new HistoryForm(snap, appSnap).Show();
+            var hf = new HistoryForm(snap, appSnap, _colors);
+            hf.RequestColors += OnFarben;
+            hf.Show();
         }
 
         void OnExit(object sender, EventArgs e)
@@ -722,15 +861,18 @@ namespace LoginTimer
         bool _allowClose;
         Point _dragStart;
         System.Windows.Forms.Timer _topmostTimer;
+        ColorScheme _colors;
 
         public void AllowClose() { _allowClose = true; }
 
-        public OverlayForm()
+        public OverlayForm(ColorScheme colors)
         {
+            _colors = colors;
+
             FormBorderStyle = FormBorderStyle.None;
             TopMost         = true;
             ShowInTaskbar   = false;
-            BackColor       = Color.FromArgb(18, 18, 18);
+            BackColor       = _colors.OverlayBg;
             Opacity         = 0.88;
             Size            = new Size(88, 36);
             Cursor          = Cursors.SizeAll;
@@ -743,7 +885,7 @@ namespace LoginTimer
             lbl.Name      = "lblTime";
             lbl.Text      = "00:00";
             lbl.Dock      = DockStyle.Fill;
-            lbl.ForeColor = Color.FromArgb(0, 215, 85);
+            lbl.ForeColor = _colors.AccentGreen;
             lbl.Font      = new Font("Consolas", 15f, FontStyle.Bold);
             lbl.TextAlign = ContentAlignment.MiddleCenter;
             lbl.Cursor    = Cursors.SizeAll;
@@ -763,6 +905,15 @@ namespace LoginTimer
             _topmostTimer.Interval = 1000;
             _topmostTimer.Tick += OnTopmostTick;
             _topmostTimer.Start();
+        }
+
+        public void ApplyColors(ColorScheme colors)
+        {
+            _colors   = colors;
+            BackColor = colors.OverlayBg;
+            var lbl = Controls["lblTime"] as Label;
+            if (lbl != null) lbl.ForeColor = colors.AccentGreen;
+            Invalidate();
         }
 
         void OnTopmostTick(object sender, EventArgs e)
@@ -911,24 +1062,29 @@ namespace LoginTimer
     {
         readonly Dictionary<DateTime, double> _snap;
         readonly Dictionary<string, double>   _todayApps;
+        readonly ColorScheme                  _colors;
         static readonly string[] DE_DAYS = { "Mo", "Di", "Mi", "Do", "Fr", "Sa", "So" };
 
+        public event EventHandler RequestColors;
+
         public HistoryForm(Dictionary<DateTime, double> snap,
-                           Dictionary<string, double> todayApps)
+                           Dictionary<string, double> todayApps,
+                           ColorScheme colors)
         {
             _snap      = snap;
             _todayApps = todayApps;
+            _colors    = colors;
             BuildUI();
         }
 
         void BuildUI()
         {
             Text        = "LoginTimer - Verlauf";
-            Size        = new Size(700, 540);
-            MinimumSize = new Size(540, 380);
+            Size        = new Size(700, 580);
+            MinimumSize = new Size(540, 420);
             TopMost     = true;
-            BackColor   = Color.FromArgb(28, 28, 28);
-            ForeColor   = Color.FromArgb(200, 200, 200);
+            BackColor   = _colors.HistoryBg;
+            ForeColor   = _colors.FormText;
             Font        = new Font("Segoe UI", 9f);
 
             var tabs = new TabControl();
@@ -938,6 +1094,27 @@ namespace LoginTimer
             tabs.TabPages.Add(MonthsTab());
             tabs.TabPages.Add(AppsTab());
             Controls.Add(tabs);
+
+            // Bottom button bar
+            var btnPanel = new Panel();
+            btnPanel.Dock   = DockStyle.Bottom;
+            btnPanel.Height = 38;
+            btnPanel.BackColor = _colors.HistoryBg;
+
+            var btnColors = new Button();
+            btnColors.Text   = "Farben…";
+            btnColors.Height = 26;
+            btnColors.Width  = 90;
+            btnColors.Left   = 8;
+            btnColors.Top    = 6;
+            btnColors.FlatStyle = FlatStyle.Flat;
+            btnColors.BackColor = _colors.HeaderBg;
+            btnColors.ForeColor = _colors.FormText;
+            btnColors.Click += (s, e) => { if (RequestColors != null) RequestColors(this, EventArgs.Empty); };
+            btnPanel.Controls.Add(btnColors);
+
+            Controls.Add(btnPanel);
+            tabs.BringToFront();
         }
 
         DataGridView MakeGrid(string[] headers, int[] widths)
@@ -950,8 +1127,8 @@ namespace LoginTimer
             grid.AllowUserToResizeRows = false;
             grid.RowHeadersVisible    = false;
             grid.SelectionMode        = DataGridViewSelectionMode.FullRowSelect;
-            grid.BackgroundColor      = Color.FromArgb(35, 35, 35);
-            grid.GridColor            = Color.FromArgb(55, 55, 55);
+            grid.BackgroundColor      = _colors.GridBg;
+            grid.GridColor            = _colors.GridLines;
             grid.BorderStyle          = BorderStyle.None;
             grid.EnableHeadersVisualStyles = false;
             grid.AutoSizeColumnsMode  = DataGridViewAutoSizeColumnsMode.None;
@@ -959,17 +1136,17 @@ namespace LoginTimer
             grid.RowTemplate.Height   = 26;
 
             var cell = new DataGridViewCellStyle();
-            cell.BackColor          = Color.FromArgb(35, 35, 35);
-            cell.ForeColor          = Color.FromArgb(210, 210, 210);
+            cell.BackColor          = _colors.GridBg;
+            cell.ForeColor          = _colors.CellText;
             cell.Font               = new Font("Consolas", 9.5f);
-            cell.SelectionBackColor = Color.FromArgb(55, 100, 70);
+            cell.SelectionBackColor = _colors.SelectionBg;
             cell.SelectionForeColor = Color.White;
             cell.Alignment          = DataGridViewContentAlignment.MiddleCenter;
             grid.DefaultCellStyle   = cell;
 
             var hdr = new DataGridViewCellStyle();
-            hdr.BackColor  = Color.FromArgb(45, 45, 45);
-            hdr.ForeColor  = Color.FromArgb(160, 160, 160);
+            hdr.BackColor  = _colors.HeaderBg;
+            hdr.ForeColor  = _colors.HeaderText;
             hdr.Font       = new Font("Segoe UI", 9f, FontStyle.Bold);
             hdr.Alignment  = DataGridViewContentAlignment.MiddleCenter;
             grid.ColumnHeadersDefaultCellStyle = hdr;
@@ -991,11 +1168,11 @@ namespace LoginTimer
             var bar = new Panel();
             bar.Dock      = DockStyle.Top;
             bar.Height    = 40;
-            bar.BackColor = Color.FromArgb(35, 35, 35);
+            bar.BackColor = _colors.GridBg;
             var lbl = new Label();
             lbl.Text      = text;
             lbl.Dock      = DockStyle.Fill;
-            lbl.ForeColor = Color.FromArgb(0, 215, 85);
+            lbl.ForeColor = _colors.AccentGreen;
             lbl.Font      = new Font("Consolas", 12f, FontStyle.Bold);
             lbl.TextAlign = ContentAlignment.MiddleLeft;
             lbl.Padding   = new Padding(14, 0, 0, 0);
@@ -1006,7 +1183,7 @@ namespace LoginTimer
         TabPage DaysTab()
         {
             var tp = new TabPage("  Tage  ");
-            tp.BackColor = Color.FromArgb(28, 28, 28);
+            tp.BackColor = _colors.HistoryBg;
 
             var todaySec = _snap.ContainsKey(DateTime.Today) ? _snap[DateTime.Today] : 0.0;
             var bar = MakeBar("Heute:   " + FormatHM(todaySec));
@@ -1035,7 +1212,7 @@ namespace LoginTimer
                     pct);
                 if (pct != "-")
                     grid.Rows[row].Cells[4].Style.ForeColor =
-                        pct.StartsWith("+") ? Color.FromArgb(0, 215, 85) : Color.FromArgb(220, 80, 60);
+                        pct.StartsWith("+") ? _colors.AccentGreen : _colors.NegativeRed;
             }
 
             tp.Controls.Add(grid);
@@ -1046,7 +1223,7 @@ namespace LoginTimer
         TabPage WeeksTab()
         {
             var tp = new TabPage("  Wochen  ");
-            tp.BackColor = Color.FromArgb(28, 28, 28);
+            tp.BackColor = _colors.HistoryBg;
 
             var grid = MakeGrid(
                 new string[] { "Woche",  "Tage", "Gesamt", "O / Tag", "+/- Vorwoche" },
@@ -1080,7 +1257,7 @@ namespace LoginTimer
                 int row = grid.Rows.Add(lbl, n, FormatHM(total), FormatHM(total / n), pct);
                 if (pct != "-")
                     grid.Rows[row].Cells[4].Style.ForeColor =
-                        pct.StartsWith("+") ? Color.FromArgb(0, 215, 85) : Color.FromArgb(220, 80, 60);
+                        pct.StartsWith("+") ? _colors.AccentGreen : _colors.NegativeRed;
             }
 
             tp.Controls.Add(grid);
@@ -1090,7 +1267,7 @@ namespace LoginTimer
         TabPage MonthsTab()
         {
             var tp = new TabPage("  Monate  ");
-            tp.BackColor = Color.FromArgb(28, 28, 28);
+            tp.BackColor = _colors.HistoryBg;
 
             var grid = MakeGrid(
                 new string[] { "Monat",  "Tage", "Gesamt", "O / Tag", "O / Woche", "+/- Vormonat" },
@@ -1124,7 +1301,7 @@ namespace LoginTimer
                     FormatHM(total / Math.Max(1.0, n / 5.0)), pct);
                 if (pct != "-")
                     grid.Rows[row].Cells[5].Style.ForeColor =
-                        pct.StartsWith("+") ? Color.FromArgb(0, 215, 85) : Color.FromArgb(220, 80, 60);
+                        pct.StartsWith("+") ? _colors.AccentGreen : _colors.NegativeRed;
             }
 
             tp.Controls.Add(grid);
@@ -1134,7 +1311,7 @@ namespace LoginTimer
         TabPage AppsTab()
         {
             var tp = new TabPage("  Apps  ");
-            tp.BackColor = Color.FromArgb(28, 28, 28);
+            tp.BackColor = _colors.HistoryBg;
 
             var bar = MakeBar("Heute – Aktivzeit pro Anwendung");
 
@@ -1144,7 +1321,7 @@ namespace LoginTimer
                 noData.Text      = "Noch keine App-Daten fuer heute.\n" +
                                    "Die Aufzeichnung laeuft im Hintergrund (alle 10 s).";
                 noData.Dock      = DockStyle.Fill;
-                noData.ForeColor = Color.FromArgb(120, 120, 120);
+                noData.ForeColor = _colors.PlaceholderText;
                 noData.Font      = new Font("Segoe UI", 9.5f);
                 noData.TextAlign = ContentAlignment.MiddleCenter;
                 tp.Controls.Add(noData);
@@ -1181,6 +1358,201 @@ namespace LoginTimer
             int h = (int)seconds / 3600;
             int m = ((int)seconds % 3600) / 60;
             return string.Format("{0:D2}:{1:D2}", h, m);
+        }
+    }
+
+    // ── Color settings dialog ─────────────────────────────────────────────────
+    class ColorSettingsForm : Form
+    {
+        struct Slot
+        {
+            public string Label;
+            public Func<ColorScheme, Color> Get;
+            public Action<ColorScheme, Color> Set;
+            public Panel Swatch;
+        }
+
+        ColorScheme _working;
+        List<Slot>  _slots;
+
+        public ColorScheme Result { get { return _working; } }
+
+        public ColorSettingsForm(ColorScheme current)
+        {
+            _working = Copy(current);
+            BuildUI();
+        }
+
+        static ColorScheme Copy(ColorScheme src)
+        {
+            return new ColorScheme
+            {
+                IconBackground  = src.IconBackground,
+                AccentGreen     = src.AccentGreen,
+                OverlayBg       = src.OverlayBg,
+                HistoryBg       = src.HistoryBg,
+                GridBg          = src.GridBg,
+                GridLines       = src.GridLines,
+                HeaderBg        = src.HeaderBg,
+                CellText        = src.CellText,
+                HeaderText      = src.HeaderText,
+                FormText        = src.FormText,
+                PlaceholderText = src.PlaceholderText,
+                SelectionBg     = src.SelectionBg,
+                NegativeRed     = src.NegativeRed,
+            };
+        }
+
+        void BuildUI()
+        {
+            Text            = "Farben";
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox     = false;
+            MinimizeBox     = false;
+            TopMost         = true;
+            ShowInTaskbar   = false;
+            ClientSize      = new Size(420, 510);
+            Font            = new Font("Segoe UI", 9f);
+            BackColor       = Color.FromArgb(32, 32, 32);
+            ForeColor       = Color.FromArgb(200, 200, 200);
+
+            _slots = new List<Slot>
+            {
+                MakeSlot("Icon-Hintergrund",       c => c.IconBackground,  (c,v) => c.IconBackground  = v),
+                MakeSlot("Akzentfarbe",            c => c.AccentGreen,     (c,v) => c.AccentGreen     = v),
+                MakeSlot("Overlay-Hintergrund",    c => c.OverlayBg,       (c,v) => c.OverlayBg       = v),
+                MakeSlot("Verlauf-Hintergrund",    c => c.HistoryBg,       (c,v) => c.HistoryBg       = v),
+                MakeSlot("Tabellen-Hintergrund",   c => c.GridBg,          (c,v) => c.GridBg          = v),
+                MakeSlot("Tabellenlinien",         c => c.GridLines,       (c,v) => c.GridLines       = v),
+                MakeSlot("Kopfzeilen-Hintergrund", c => c.HeaderBg,        (c,v) => c.HeaderBg        = v),
+                MakeSlot("Zellentext",             c => c.CellText,        (c,v) => c.CellText        = v),
+                MakeSlot("Kopfzeilentext",         c => c.HeaderText,      (c,v) => c.HeaderText      = v),
+                MakeSlot("Formulartext",           c => c.FormText,        (c,v) => c.FormText        = v),
+                MakeSlot("Platzhaltertext",        c => c.PlaceholderText, (c,v) => c.PlaceholderText = v),
+                MakeSlot("Auswahl-Hintergrund",    c => c.SelectionBg,     (c,v) => c.SelectionBg     = v),
+                MakeSlot("Negativwert (Rot)",      c => c.NegativeRed,     (c,v) => c.NegativeRed     = v),
+            };
+
+            var tbl = new TableLayoutPanel();
+            tbl.ColumnCount = 3;
+            tbl.RowCount    = _slots.Count;
+            tbl.Dock        = DockStyle.None;
+            tbl.Left        = 12;
+            tbl.Top         = 12;
+            tbl.Width       = 396;
+            tbl.Height      = _slots.Count * 34;
+            tbl.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 32));
+            tbl.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            tbl.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
+
+            for (int i = 0; i < _slots.Count; i++)
+            {
+                var slot = _slots[i]; // capture for lambda
+                int idx  = i;
+                tbl.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+
+                var swatch = new Panel();
+                swatch.Size        = new Size(24, 24);
+                swatch.BackColor   = slot.Get(_working);
+                swatch.BorderStyle = BorderStyle.FixedSingle;
+                swatch.Margin      = new Padding(2, 4, 4, 4);
+                slot.Swatch = swatch;
+                _slots[idx] = slot;
+                tbl.Controls.Add(swatch, 0, i);
+
+                var lbl = new Label();
+                lbl.Text      = slot.Label;
+                lbl.Dock      = DockStyle.Fill;
+                lbl.TextAlign = ContentAlignment.MiddleLeft;
+                lbl.ForeColor = Color.FromArgb(200, 200, 200);
+                tbl.Controls.Add(lbl, 1, i);
+
+                var btn = new Button();
+                btn.Text      = "Ändern…";
+                btn.Height    = 26;
+                btn.FlatStyle = FlatStyle.Flat;
+                btn.BackColor = Color.FromArgb(55, 55, 55);
+                btn.ForeColor = Color.FromArgb(200, 200, 200);
+                btn.Margin    = new Padding(2, 3, 2, 3);
+                var capturedIdx = idx;
+                btn.Click += (s, e) => OnChange(capturedIdx);
+                tbl.Controls.Add(btn, 2, i);
+            }
+
+            Controls.Add(tbl);
+
+            // Bottom buttons
+            int bottomY = tbl.Bottom + 14;
+
+            var btnReset = new Button();
+            btnReset.Text      = "Standard wiederherstellen";
+            btnReset.Width     = 190;
+            btnReset.Height    = 28;
+            btnReset.Left      = 12;
+            btnReset.Top       = bottomY;
+            btnReset.FlatStyle = FlatStyle.Flat;
+            btnReset.BackColor = Color.FromArgb(55, 55, 55);
+            btnReset.ForeColor = Color.FromArgb(200, 200, 200);
+            btnReset.Click    += OnReset;
+            Controls.Add(btnReset);
+
+            var btnOk = new Button();
+            btnOk.Text         = "OK";
+            btnOk.Width        = 75;
+            btnOk.Height       = 28;
+            btnOk.Left         = ClientSize.Width - 170;
+            btnOk.Top          = bottomY;
+            btnOk.FlatStyle    = FlatStyle.Flat;
+            btnOk.BackColor    = Color.FromArgb(55, 100, 70);
+            btnOk.ForeColor    = Color.White;
+            btnOk.DialogResult = DialogResult.OK;
+            AcceptButton       = btnOk;
+            Controls.Add(btnOk);
+
+            var btnCancel = new Button();
+            btnCancel.Text         = "Abbrechen";
+            btnCancel.Width        = 85;
+            btnCancel.Height       = 28;
+            btnCancel.Left         = ClientSize.Width - 88;
+            btnCancel.Top          = bottomY;
+            btnCancel.FlatStyle    = FlatStyle.Flat;
+            btnCancel.BackColor    = Color.FromArgb(55, 55, 55);
+            btnCancel.ForeColor    = Color.FromArgb(200, 200, 200);
+            btnCancel.DialogResult = DialogResult.Cancel;
+            CancelButton           = btnCancel;
+            Controls.Add(btnCancel);
+
+            ClientSize = new Size(420, bottomY + 44);
+        }
+
+        Slot MakeSlot(string label,
+                      Func<ColorScheme, Color> get,
+                      Action<ColorScheme, Color> set)
+        {
+            return new Slot { Label = label, Get = get, Set = set };
+        }
+
+        void OnChange(int idx)
+        {
+            var slot = _slots[idx];
+            using (var dlg = new ColorDialog())
+            {
+                dlg.Color    = slot.Get(_working);
+                dlg.FullOpen = true;
+                if (dlg.ShowDialog(this) != DialogResult.OK) return;
+                slot.Set(_working, dlg.Color);
+                slot.Swatch.BackColor = dlg.Color;
+            }
+        }
+
+        void OnReset(object sender, EventArgs e)
+        {
+            _working = ColorScheme.Default();
+            for (int i = 0; i < _slots.Count; i++)
+            {
+                var slot = _slots[i];
+                slot.Swatch.BackColor = slot.Get(_working);
+            }
         }
     }
 }
