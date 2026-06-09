@@ -44,7 +44,11 @@
     <!-- "LoginTimer jetzt starten" checkbox on the Finish page -->
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="LoginTimer jetzt starten" />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX"     Value="1" />
-    <Property Id="WixShellExecTarget" Value="[INSTALLFOLDER]LoginTimer.exe" />
+    <!-- Set WixShellExecTarget at runtime so [INSTALLFOLDER] is resolved -->
+    <SetProperty Id="WixShellExecTarget"
+                 Value="[INSTALLFOLDER]LoginTimer.exe"
+                 Before="AppSearch"
+                 Sequence="ui" />
     <CustomAction Id="LaunchApp" BinaryKey="WixCA" DllEntry="WixShellExec" Impersonate="yes" />
 
     <!-- Feature-Tree-Dialog: Willkommen > Lizenz > Komponenten > Installieren > Fertig -->
