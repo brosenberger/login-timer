@@ -442,6 +442,7 @@ namespace LoginTimer
             _overlay.ContextMenuStrip = _tray.ContextMenuStrip;
             _overlay.RequestHistory += delegate { ShowHistory(); };
             _overlay.Show();
+            _overlay.SetTime(FormatHM(TodaySeconds())); // show correct time immediately
 
             _timer = new System.Windows.Forms.Timer();
             _timer.Interval = 30000;
