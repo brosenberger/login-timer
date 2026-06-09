@@ -5,6 +5,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Farben panel** — full color-customization dialog accessible via tray context menu ("Farben…") and History window button
+  - 13 individually configurable color slots: icon background, accent color, overlay background, history background, table background, grid lines, column header background, cell text, header text, form text, placeholder text, selection background, negative-change red
+  - Per-slot color picker (`ColorDialog`) with live swatch preview in the settings dialog
+  - "Standard wiederherstellen" button resets all slots to the built-in dark-green defaults
+  - Scheme persisted to `%AppData%\LoginTimer\colors.ini` (plain `key=R,G,B` format) and loaded on startup
+  - Overlay and tray icon repaint immediately on OK; open History windows are closed and reopen with the new scheme on next access
+
+### Fixed
+- **ZIP step in `build-all.bat` crashed with `. was unexpected at this time.`** — the echo inside the failure branch of the `if` block contained a literal `)` in `(PowerShell 5+ erforderlich)`, which CMD parsed as the closing delimiter of the `if` block, leaving the trailing `.` as an unexpected token; escaped to `^(` / `^)`.  
+  The `Compress-Archive` invocation was also rewritten to pass paths via environment variables (`$env:LT_F1` etc.) instead of embedding `%~dp0`-expanded paths directly in the `-Command` string, avoiding CMD quoting pitfalls.
+
+---
+
 ## [1.1.1] — 2026-06-09
 
 ### Fixed
