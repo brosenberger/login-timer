@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.1.1] — 2026-06-09
+
+### Fixed
+- **ZIP step in `build-all.bat` prompted for input** — `Compress-Archive` was split across multiple lines using `^` continuation; cmd concatenated the fragments with spaces inside the quoted `-Command` string, leaving PowerShell with an incomplete expression that fell into interactive mode asking for `-DestinationPath`. Collapsed to a single line.
+
+---
+
 ## [1.1.0] — 2026-06-09
 
 ### Added
