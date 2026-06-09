@@ -1,6 +1,6 @@
-# Compiled binaries
-*.exe
-*.msi
+# Compiled binaries (placed in dist/ by build scripts)
+dist/*
+!dist/.gitkeep
 
 # WiX intermediate files
 *.wixobj

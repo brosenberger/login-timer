@@ -8,10 +8,10 @@ timeout /t 2 /nobreak >nul
 echo Kompiliere neu...
 call "%~dp0build.bat"
 
-if exist "!ROOT!\LoginTimer.exe" (
+if exist "!ROOT!\dist\LoginTimer.exe" (
     echo Starte LoginTimer...
-    start "" "!ROOT!\LoginTimer.exe"
+    start "" "!ROOT!\dist\LoginTimer.exe"
 ) else (
-    echo FEHLER: LoginTimer.exe nicht gefunden.
+    echo FEHLER: dist\LoginTimer.exe nicht gefunden.
     pause
 )

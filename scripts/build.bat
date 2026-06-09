@@ -21,7 +21,7 @@ if not defined CSC (
 echo Compiler: !CSC! > "!ROOT!\build.log"
 echo. >> "!ROOT!\build.log"
 
-"!CSC!" /target:winexe /out:"!ROOT!\LoginTimer.exe" ^
+"!CSC!" /target:winexe /out:"!ROOT!\dist\LoginTimer.exe" ^
     /r:System.Windows.Forms.dll ^
     /r:System.Drawing.dll ^
     "!ROOT!\src\LoginTimer.cs" >> "!ROOT!\build.log" 2>&1
@@ -33,5 +33,5 @@ if !ERRORLEVEL! neq 0 (
 )
 
 echo. >> "!ROOT!\build.log"
-echo Fertig LoginTimer.exe wurde erstellt. >> "!ROOT!\build.log"
+echo Fertig dist\LoginTimer.exe wurde erstellt. >> "!ROOT!\build.log"
 exit /b 0

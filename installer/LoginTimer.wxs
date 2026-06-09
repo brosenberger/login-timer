@@ -91,7 +91,7 @@
     <!-- LoginTimer.exe -->
     <Component Id="MainExecutable" Directory="INSTALLFOLDER"
                Guid="{A2B3C4D5-E6F7-8901-A2B3-C4D5E6F78901}">
-      <File Id="LoginTimerEXE" Source="..\LoginTimer.exe" KeyPath="yes" />
+      <File Id="LoginTimerEXE" Source="..\dist\LoginTimer.exe" KeyPath="yes" />
     </Component>
 
     <!-- Autostart-Verknuepfung im Startup-Ordner -->
