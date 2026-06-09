@@ -20,7 +20,7 @@ if not defined CSC (
 )
 
 echo Kompiliere Installer...
-"!CSC!" /target:winexe /out:"!ROOT!\installer\Installer.exe" ^
+"!CSC!" /target:winexe /out:"!ROOT!\dist\Installer.exe" ^
     /r:System.Windows.Forms.dll ^
     /r:System.Drawing.dll ^
     "!ROOT!\installer\Installer.cs" > "!ROOT!\install.log" 2>&1
@@ -32,4 +32,4 @@ if !ERRORLEVEL! neq 0 (
 )
 
 echo Starte Installer...
-start "" "!ROOT!\installer\Installer.exe"
+start "" "!ROOT!\dist\Installer.exe"
