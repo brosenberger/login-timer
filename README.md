@@ -35,9 +35,10 @@ Last 12 months — total, days tracked, average per day, average per week, and %
 - **Auto-tracking** — starts on login, pauses on Windows lock / remote disconnect, resumes on unlock
 - **Floating widget** — always-on-top HH:MM display, draggable, position persisted across restarts
 - **Tray icon** — live time rendered directly into the icon; right-click menu to toggle widget or quit
-- **History window** — days / weeks / months tabs with averages and ±% change indicators
+- **History window** — days / weeks / months / apps tabs with averages and ±% change indicators
+- **Per-app tracking** — every 10 s the topmost visible window per monitor is recorded; works correctly with video on a second monitor while working on the first
 - **Double-click** widget or tray icon to open history
-- **Single-file data store** — `%AppData%\LoginTimer\data.csv` (plain CSV, easy to inspect or back up)
+- **Plain CSV data store** — `%AppData%\LoginTimer\data.csv` and `apps.csv` (easy to inspect or back up)
 - **No installation required** — uses only the .NET Framework already built into Windows 10/11
 
 ---

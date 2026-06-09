@@ -5,6 +5,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.1.0] — 2026-06-09
+
+### Added
+- **Per-application time tracking** — every 10 seconds the topmost visible, non-minimised window on each monitor is detected and its process is credited with active time
+  - Multi-monitor aware: a video playing on monitor 2 and an editor on monitor 1 are both tracked simultaneously
+  - Z-order walk (`GetTopWindow` / `GetWindow`) ensures the correct foreground window per monitor is found even if the global foreground window is on a different screen
+  - System processes (`dwm`, `svchost`, taskbar, desktop, etc.) are automatically excluded
+  - Friendly display names for common apps (Chrome, Firefox, Edge, VLC, Spotify, VS Code, …); unknown processes are shown with a capitalised process name
+  - Data stored in `%AppData%\LoginTimer\apps.csv` (`yyyy-MM-dd,processname,seconds`)
+  - Saved every 30 seconds (same checkpoint as login time) and on lock / quit
+- **Apps tab** in the History window
+  - Shows today's per-application active time sorted by duration
+  - Columns: App name, Zeit (HH:MM), Stunden (decimal)
+  - "No data yet" placeholder shown until the first 10-second tick completes
+
+### Changed
+- History window title updated to reflect four tabs (days / weeks / months / **apps**)
+
+---
+
 ## [1.0.0] — 2026-06-09
 
 ### Added

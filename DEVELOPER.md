@@ -55,10 +55,14 @@ git push origin main --tags
 ```
 LoginTimer.cs          Main application (single file)
   ├─ Program            Entry point, mutex, error logging
-  ├─ DayData            CSV storage (load / save / get / set)
-  ├─ TrayApp            ApplicationContext: tray icon, timer, session events
+  ├─ POINT/RECT/        Win32 structs for P/Invoke
+  │   WINDOWPLACEMENT
+  ├─ WindowHelper       Per-monitor active-window detection (Z-order walk)
+  ├─ AppTracker         Per-app time storage (apps.csv)
+  ├─ DayData            Login-time CSV storage (data.csv)
+  ├─ TrayApp            ApplicationContext: tray icon, timers, session events
   ├─ OverlayForm        Floating always-on-top widget
-  └─ HistoryForm        Statistics window (tabs: days / weeks / months)
+  └─ HistoryForm        Statistics window (tabs: days / weeks / months / apps)
 
 build.bat              Compiles LoginTimer.exe via built-in csc.exe
 restart.bat            kill → build → start (dev workflow)
@@ -78,6 +82,7 @@ docs/screenshots/      PNG screenshots used in README.md
 | Path | Content |
 |------|---------|
 | `%AppData%\LoginTimer\data.csv` | `yyyy-MM-dd,seconds` — one line per day |
+| `%AppData%\LoginTimer\apps.csv` | `yyyy-MM-dd,processname,seconds` — one line per day+app |
 | `%AppData%\LoginTimer\overlay.pos` | `x,y` — last widget position |
 | `%AppData%\LoginTimer\error.log` | Appended on unhandled exceptions |
 
@@ -86,6 +91,6 @@ docs/screenshots/      PNG screenshots used in README.md
 ## Known constraints
 
 - Built with **C# 5** (`csc.exe` from .NET Framework 4.x) — no expression-bodied members, no string interpolation, no numeric literal separators.
-- **Single source file** (`LoginTimer.cs`) — keep it that way unless the file grows beyond ~800 lines.
+- **Single source file** (`LoginTimer.cs`) — keep it that way unless the file grows beyond ~1000 lines.
 - The `Bitmap` backing the tray icon (`_iconBitmap`) must stay alive while the icon handle is in use — disposing it invalidates the GDI handle and makes the icon disappear.
 - `WS_EX_NOACTIVATE` on the overlay prevents focus steal but also means the widget cannot receive keyboard input — intentional.

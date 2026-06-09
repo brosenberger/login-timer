@@ -1,17 +1,288 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Text;
 using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
 namespace LoginTimer
 {
+    // ── Win32 structs ─────────────────────────────────────────────────────────
+    [StructLayout(LayoutKind.Sequential)]
+    struct POINT { public int X, Y; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct WINDOWPLACEMENT
+    {
+        public int length, flags, showCmd;
+        public POINT ptMinPosition, ptMaxPosition;
+        public RECT rcNormalPosition;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct RECT { public int Left, Top, Right, Bottom; }
+
+    // ── Per-monitor active window detection ───────────────────────────────────
+    static class WindowHelper
+    {
+        delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+        delegate bool MonitorEnumProc(IntPtr hMonitor, IntPtr hdcMonitor,
+                                      IntPtr lprcMonitor, IntPtr dwData);
+
+        [DllImport("user32.dll")]
+        static extern bool IsWindowVisible(IntPtr hWnd);
+        [DllImport("user32.dll")]
+        static extern bool GetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT lpwndpl);
+        [DllImport("user32.dll")]
+        static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
+        [DllImport("user32.dll")]
+        static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr lprcClip,
+                                               MonitorEnumProc lpfnEnum, IntPtr dwData);
+        [DllImport("user32.dll")]
+        static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+        [DllImport("user32.dll")]
+        static extern IntPtr GetTopWindow(IntPtr hWnd);
+        [DllImport("user32.dll")]
+        static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+
+        const uint MONITOR_DEFAULTTONULL = 0;
+        const uint GW_HWNDNEXT           = 2;
+        const int  SW_SHOWMINIMIZED      = 2;
+
+        static readonly int _ownPid = Process.GetCurrentProcess().Id;
+
+        static readonly HashSet<string> _systemProcs =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "dwm","winlogon","csrss","wininit","services","lsass","svchost",
+                "conhost","dllhost","sihost","fontdrvhost","spoolsv","taskhostw",
+                "searchhost","searchindexer","runtimebroker","applicationframehost",
+                "shellexperiencehost","startmenuexperiencehost","textinputhost",
+                "systemsettings","lockapp","logonui","userinit","idle","registry"
+            };
+
+        static readonly HashSet<string> _systemClasses =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "Shell_TrayWnd","Progman","WorkerW","tooltips_class32",
+                "DV2ControlHost","SysShadow","Shell_SecondaryTrayWnd"
+            };
+
+        static readonly Dictionary<string, string> _friendlyNames =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                {"chrome",          "Google Chrome"},
+                {"firefox",         "Firefox"},
+                {"msedge",          "Microsoft Edge"},
+                {"opera",           "Opera"},
+                {"brave",           "Brave"},
+                {"vivaldi",         "Vivaldi"},
+                {"vlc",             "VLC"},
+                {"spotify",         "Spotify"},
+                {"steam",           "Steam"},
+                {"explorer",        "Explorer"},
+                {"code",            "VS Code"},
+                {"devenv",          "Visual Studio"},
+                {"rider64",         "JetBrains Rider"},
+                {"phpstorm64",      "PhpStorm"},
+                {"idea64",          "IntelliJ IDEA"},
+                {"webstorm64",      "WebStorm"},
+                {"cursor",          "Cursor"},
+                {"slack",           "Slack"},
+                {"ms-teams",        "Microsoft Teams"},
+                {"teams",           "Microsoft Teams"},
+                {"discord",         "Discord"},
+                {"zoom",            "Zoom"},
+                {"outlook",         "Outlook"},
+                {"thunderbird",     "Thunderbird"},
+                {"notepad",         "Notepad"},
+                {"notepad++",       "Notepad++"},
+                {"winword",         "Word"},
+                {"excel",           "Excel"},
+                {"powerpnt",        "PowerPoint"},
+                {"onenote",         "OneNote"},
+                {"acrobat",         "Adobe Acrobat"},
+                {"acrord32",        "Adobe Reader"},
+                {"mspaint",         "Paint"},
+                {"gimp-2.10",       "GIMP"},
+                {"photoshop",       "Photoshop"},
+                {"powershell",      "PowerShell"},
+                {"windowsterminal", "Windows Terminal"},
+                {"wt",              "Windows Terminal"},
+                {"cmd",             "Command Prompt"},
+                {"mstsc",           "Remote Desktop"},
+                {"putty",           "PuTTY"},
+                {"filezilla",       "FileZilla"},
+                {"postman",         "Postman"},
+            };
+
+        public static string GetFriendlyName(string processName)
+        {
+            if (string.IsNullOrEmpty(processName)) return "Unknown";
+            string friendly;
+            if (_friendlyNames.TryGetValue(processName, out friendly)) return friendly;
+            return char.ToUpper(processName[0]) + processName.Substring(1);
+        }
+
+        /// <summary>
+        /// Returns lower-cased process names of the topmost visible,
+        /// non-minimised, non-system window on each monitor.
+        /// A process visible on N monitors is counted once (HashSet dedup).
+        /// </summary>
+        public static List<string> GetActiveAppsPerMonitor()
+        {
+            // 1. Collect monitors
+            var monitors = new List<IntPtr>();
+            MonitorEnumProc monCb = delegate(IntPtr hMon, IntPtr hdc, IntPtr lprc, IntPtr data)
+            {
+                monitors.Add(hMon);
+                return true;
+            };
+            EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, monCb, IntPtr.Zero);
+            if (monitors.Count == 0) return new List<string>();
+
+            // 2. Walk Z-order top-to-bottom, keep visible non-minimised windows
+            var zOrder = new List<IntPtr>();
+            IntPtr cur = GetTopWindow(IntPtr.Zero);
+            int guard = 4000;
+            while (cur != IntPtr.Zero && guard-- > 0)
+            {
+                if (IsWindowVisible(cur))
+                {
+                    var wp = new WINDOWPLACEMENT();
+                    wp.length = Marshal.SizeOf(typeof(WINDOWPLACEMENT));
+                    GetWindowPlacement(cur, ref wp);
+                    if (wp.showCmd != SW_SHOWMINIMIZED)
+                        zOrder.Add(cur);
+                }
+                cur = GetWindow(cur, GW_HWNDNEXT);
+            }
+
+            // 3. For each monitor: first (= topmost) qualifying app window
+            var result   = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var classBuf = new StringBuilder(256);
+            var pidCache = new Dictionary<uint, string>(); // pid -> processName (null = skip)
+
+            foreach (var monitor in monitors)
+            {
+                foreach (var hwnd in zOrder)
+                {
+                    if (MonitorFromWindow(hwnd, MONITOR_DEFAULTTONULL) != monitor)
+                        continue;
+
+                    // Filter system window classes
+                    classBuf.Clear();
+                    GetClassName(hwnd, classBuf, 256);
+                    if (_systemClasses.Contains(classBuf.ToString())) continue;
+
+                    // Get process name (cached per PID)
+                    uint pid;
+                    GetWindowThreadProcessId(hwnd, out pid);
+                    if ((int)pid == _ownPid) continue;
+
+                    string procName;
+                    if (!pidCache.TryGetValue(pid, out procName))
+                    {
+                        procName = GetProcessNameSafe((int)pid);
+                        pidCache[pid] = procName;
+                    }
+                    if (procName == null) continue;
+                    if (_systemProcs.Contains(procName)) continue;
+
+                    result.Add(procName.ToLower());
+                    break; // topmost app found for this monitor
+                }
+            }
+            return new List<string>(result);
+        }
+
+        static string GetProcessNameSafe(int pid)
+        {
+            try { using (var p = Process.GetProcessById(pid)) return p.ProcessName; }
+            catch { return null; }
+        }
+    }
+
+    // ── Per-app time storage ──────────────────────────────────────────────────
+    class AppTracker
+    {
+        readonly string _path;
+        // date → processName → accumulated seconds
+        Dictionary<DateTime, Dictionary<string, double>> _data;
+
+        public AppTracker(string path) { _path = path; Load(); }
+
+        public void RecordTick(IEnumerable<string> processNames, double seconds)
+        {
+            var today = DateTime.Today;
+            if (!_data.ContainsKey(today))
+                _data[today] = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+            foreach (var name in processNames)
+            {
+                if (!_data[today].ContainsKey(name))
+                    _data[today][name] = 0.0;
+                _data[today][name] += seconds;
+            }
+        }
+
+        public Dictionary<string, double> GetDay(DateTime day)
+        {
+            Dictionary<string, double> d;
+            if (_data.TryGetValue(day.Date, out d))
+                return new Dictionary<string, double>(d, StringComparer.OrdinalIgnoreCase);
+            return new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        public void Save()
+        {
+            try
+            {
+                var dir = Path.GetDirectoryName(_path);
+                if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+                var lines = new List<string>();
+                foreach (var day in _data.OrderBy(kv => kv.Key))
+                    foreach (var app in day.Value.OrderByDescending(kv => kv.Value))
+                        lines.Add(day.Key.ToString("yyyy-MM-dd") + "," +
+                                   app.Key + "," +
+                                   app.Value.ToString(CultureInfo.InvariantCulture));
+                File.WriteAllLines(_path, lines.ToArray());
+            }
+            catch { }
+        }
+
+        void Load()
+        {
+            _data = new Dictionary<DateTime, Dictionary<string, double>>();
+            if (!File.Exists(_path)) return;
+            foreach (var line in File.ReadAllLines(_path))
+            {
+                var parts = line.Split(',');
+                if (parts.Length < 3) continue;
+                DateTime d;
+                double s;
+                if (!DateTime.TryParseExact(parts[0].Trim(), "yyyy-MM-dd",
+                        CultureInfo.InvariantCulture, DateTimeStyles.None, out d)) continue;
+                var name = parts[1].Trim();
+                if (string.IsNullOrEmpty(name)) continue;
+                if (!double.TryParse(parts[2].Trim(), NumberStyles.Any,
+                        CultureInfo.InvariantCulture, out s)) continue;
+                if (!_data.ContainsKey(d.Date))
+                    _data[d.Date] = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+                _data[d.Date][name] = s;
+            }
+        }
+    }
+
+    // ── Entry point ───────────────────────────────────────────────────────────
     static class Program
     {
         static Mutex _mutex = new Mutex(true, "LoginTimerMutex_v1");
@@ -72,7 +343,7 @@ namespace LoginTimer
         }
     }
 
-    // ── Storage: simple CSV  date,seconds ────────────────────────────────────
+    // ── Storage: simple CSV  date,seconds ─────────────────────────────────────
     class DayData
     {
         readonly Dictionary<DateTime, double> _secs = new Dictionary<DateTime, double>();
@@ -132,13 +403,16 @@ namespace LoginTimer
     class TrayApp : ApplicationContext
     {
         readonly string _dataPath;
-        DayData _data;
-        DateTime? _segStart;
+        DayData    _data;
+        AppTracker _appTracker;
+        DateTime?  _segStart;
         NotifyIcon _tray;
-        System.Windows.Forms.Timer _timer;
-        Icon _currentIcon;
-        Bitmap _iconBitmap;  // must stay alive while icon is in use
+        System.Windows.Forms.Timer _timer;       // 30 s: checkpoint + icon update
+        System.Windows.Forms.Timer _appTimer;    // 10 s: per-monitor app tracking
+        Icon   _currentIcon;
+        Bitmap _iconBitmap;  // must stay alive while icon handle is in use
         OverlayForm _overlay;
+        System.Threading.SynchronizationContext _syncCtx; // marshal back to UI thread
 
         public TrayApp()
         {
@@ -147,20 +421,26 @@ namespace LoginTimer
                 "LoginTimer", "data.csv");
 
             _data = new DayData(_dataPath);
+
+            var appDataPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "LoginTimer", "apps.csv");
+            _appTracker = new AppTracker(appDataPath);
+
             _segStart = DateTime.Now;
+            _syncCtx  = System.Threading.SynchronizationContext.Current;
 
             _tray = new NotifyIcon();
             _tray.ContextMenuStrip = BuildMenu();
             _tray.DoubleClick += OnDoubleClick;
             _tray.Text = "LoginTimer";
 
-            // Icon muss gesetzt sein BEVOR Visible = true
             UpdateIcon();
             _tray.Visible = true;
 
-            // Overlay (standardmaessig sichtbar)
             _overlay = new OverlayForm();
-            _overlay.RequestHistory += (s, e) => ShowHistory();
+            _overlay.ContextMenuStrip = _tray.ContextMenuStrip;
+            _overlay.RequestHistory += delegate { ShowHistory(); };
             _overlay.Show();
 
             _timer = new System.Windows.Forms.Timer();
@@ -168,19 +448,40 @@ namespace LoginTimer
             _timer.Tick += OnTick;
             _timer.Start();
 
+            _appTimer = new System.Windows.Forms.Timer();
+            _appTimer.Interval = 10000;
+            _appTimer.Tick += OnAppTick;
+            _appTimer.Start();
+
             SystemEvents.SessionSwitch += OnSessionSwitch;
             Application.ApplicationExit += OnExit;
         }
 
-        void OnDoubleClick(object sender, EventArgs e)
-        {
-            ShowHistory();
-        }
+        void OnDoubleClick(object sender, EventArgs e) { ShowHistory(); }
 
         void OnTick(object sender, EventArgs e)
         {
             Checkpoint();
             UpdateIcon();
+        }
+
+        void OnAppTick(object sender, EventArgs e)
+        {
+            if (_segStart == null) return; // locked / disconnected
+            // Run the P/Invoke scan on a thread-pool thread so the UI stays
+            // responsive (window dragging, Chrome tab switching, etc.).
+            double tickSecs = _appTimer.Interval / 1000.0;
+            System.Threading.ThreadPool.QueueUserWorkItem(delegate
+            {
+                var apps = WindowHelper.GetActiveAppsPerMonitor();
+                if (apps.Count == 0) return;
+                _syncCtx.Post(delegate
+                {
+                    // Back on UI thread: safe to mutate AppTracker
+                    if (_segStart != null)
+                        _appTracker.RecordTick(apps, tickSecs);
+                }, null);
+            });
         }
 
         void OnSessionSwitch(object sender, SessionSwitchEventArgs e)
@@ -218,10 +519,11 @@ namespace LoginTimer
             var elapsed = (now - _segStart.Value).TotalSeconds;
             _data.Set(now.Date, _data.Get(now.Date) + elapsed);
             _data.Save();
+            _appTracker.Save();
             _segStart = now;
         }
 
-        // Final commit on lock/exit
+        // Final commit on lock / exit
         void CommitSegment()
         {
             if (_segStart == null) return;
@@ -238,6 +540,7 @@ namespace LoginTimer
             _data.Set(now.Date,
                 _data.Get(now.Date) + (now - _segStart.Value).TotalSeconds);
             _data.Save();
+            _appTracker.Save();
             _segStart = null;
         }
 
@@ -252,7 +555,7 @@ namespace LoginTimer
 
         void UpdateIcon()
         {
-            var secs = TodaySeconds();
+            var secs  = TodaySeconds();
             var label = FormatHM(secs);
             _tray.Text = "LoginTimer  " + label + " heute";
 
@@ -282,8 +585,8 @@ namespace LoginTimer
 
                 var parts = label.Split(':');
                 var green = new SolidBrush(Color.FromArgb(0, 215, 85));
-                var sfC = new StringFormat();
-                sfC.Alignment = StringAlignment.Center;
+                var sfC   = new StringFormat();
+                sfC.Alignment     = StringAlignment.Center;
                 sfC.LineAlignment = StringAlignment.Center;
 
                 using (var fH = new Font("Arial", 14f, FontStyle.Bold))
@@ -295,7 +598,6 @@ namespace LoginTimer
                 green.Dispose();
                 sfC.Dispose();
             }
-            // Keep bitmap alive — GetHicon() handle becomes invalid if bitmap is disposed
             if (_iconBitmap != null) _iconBitmap.Dispose();
             _iconBitmap = bmp;
             return Icon.FromHandle(bmp.GetHicon());
@@ -307,7 +609,7 @@ namespace LoginTimer
             m.Items.Add("Verlauf anzeigen", null, OnShowHistory);
             var overlayItem = new ToolStripMenuItem("Zeitanzeige (Widget)");
             overlayItem.Checked = true;
-            overlayItem.Click += OnToggleOverlay;
+            overlayItem.Click  += OnToggleOverlay;
             m.Items.Add(overlayItem);
             m.Items.Add(new ToolStripSeparator());
             m.Items.Add("Beenden", null, OnQuit);
@@ -315,18 +617,18 @@ namespace LoginTimer
         }
 
         void OnShowHistory(object sender, EventArgs e) { ShowHistory(); }
+
         void OnToggleOverlay(object sender, EventArgs e)
         {
             if (_overlay.Visible) _overlay.Hide(); else _overlay.Show();
-            // Update menu checkmark
-            var menu = _tray.ContextMenuStrip;
-            foreach (ToolStripItem item in menu.Items)
+            foreach (ToolStripItem item in _tray.ContextMenuStrip.Items)
             {
                 var mi = item as ToolStripMenuItem;
                 if (mi != null && mi.Text.StartsWith("Zeitanzeige"))
                     mi.Checked = _overlay.Visible;
             }
         }
+
         void OnQuit(object sender, EventArgs e) { Application.Exit(); }
 
         void ShowHistory()
@@ -334,60 +636,53 @@ namespace LoginTimer
             var snap = new Dictionary<DateTime, double>();
             foreach (var kv in _data.All())
                 snap[kv.Key] = kv.Value;
-
             if (_segStart.HasValue)
             {
                 var running = Math.Max(0, (DateTime.Now - _segStart.Value).TotalSeconds);
                 snap[DateTime.Today] = _data.Get(DateTime.Today) + running;
             }
 
-            new HistoryForm(snap).Show();
+            var appSnap = _appTracker.GetDay(DateTime.Today);
+            new HistoryForm(snap, appSnap).Show();
         }
 
         void OnExit(object sender, EventArgs e)
         {
             CommitSegment();
             _timer.Stop();
+            _appTimer.Stop();
             SystemEvents.SessionSwitch -= OnSessionSwitch;
             _tray.Visible = false;
             _tray.Dispose();
-            if (_overlay != null)
-            {
-                _overlay.SavePositionPublic();   // Position beim Beenden sichern
-                _overlay.Dispose();
-            }
+            if (_overlay != null) { _overlay.SavePositionPublic(); _overlay.Dispose(); }
             if (_currentIcon != null) _currentIcon.Dispose();
-            if (_iconBitmap != null) _iconBitmap.Dispose();
+            if (_iconBitmap  != null) _iconBitmap.Dispose();
         }
     }
 
     // ── Floating overlay window ───────────────────────────────────────────────
     class OverlayForm : Form
     {
-        // P/Invoke: SetWindowPos haelt das Widget UEBER der Taskleiste
         [DllImport("user32.dll", SetLastError = true)]
         static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
             int X, int Y, int cx, int cy, uint uFlags);
 
-        static readonly IntPtr HWND_TOPMOST   = new IntPtr(-1);
+        static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
         const uint SWP_NOMOVE    = 0x0002;
         const uint SWP_NOSIZE    = 0x0001;
         const uint SWP_NOACTIVATE = 0x0010;
 
-        // WS_EX_NOACTIVATE: Widget nimmt keinen Fokus — Klick auf Taskbar
-        // aktiviert nicht das Widget und schiebt es nicht nach hinten
         protected override CreateParams CreateParams
         {
             get
             {
                 var cp = base.CreateParams;
                 cp.ExStyle |= 0x08000000; // WS_EX_NOACTIVATE
-                cp.ExStyle |= 0x00000080; // WS_EX_TOOLWINDOW (kein Alt-Tab Eintrag)
+                cp.ExStyle |= 0x00000080; // WS_EX_TOOLWINDOW
                 return cp;
             }
         }
 
-        // Wird von TrayApp abonniert um den Verlauf-Dialog zu oeffnen
         public event EventHandler RequestHistory;
 
         bool _dragging;
@@ -397,59 +692,41 @@ namespace LoginTimer
         public OverlayForm()
         {
             FormBorderStyle = FormBorderStyle.None;
-            TopMost = true;
-            ShowInTaskbar = false;
-            BackColor = Color.FromArgb(18, 18, 18);
-            Opacity = 0.88;
-            Size = new Size(88, 36);
-            Cursor = Cursors.SizeAll;
+            TopMost         = true;
+            ShowInTaskbar   = false;
+            BackColor       = Color.FromArgb(18, 18, 18);
+            Opacity         = 0.88;
+            Size            = new Size(88, 36);
+            Cursor          = Cursors.SizeAll;
 
-            // Position: bottom-right above taskbar
             var screen = Screen.PrimaryScreen.WorkingArea;
             Location = new Point(screen.Right - Width - 8, screen.Bottom - Height - 4);
-
-            // Restore saved position
             LoadPosition();
 
             var lbl = new Label();
-            lbl.Name = "lblTime";
-            lbl.Text = "00:00";
-            lbl.Dock = DockStyle.Fill;
+            lbl.Name      = "lblTime";
+            lbl.Text      = "00:00";
+            lbl.Dock      = DockStyle.Fill;
             lbl.ForeColor = Color.FromArgb(0, 215, 85);
-            lbl.Font = new Font("Consolas", 15f, FontStyle.Bold);
+            lbl.Font      = new Font("Consolas", 15f, FontStyle.Bold);
             lbl.TextAlign = ContentAlignment.MiddleCenter;
-            lbl.Cursor = Cursors.SizeAll;
-            lbl.MouseDown += OnMouseDown;
-            lbl.MouseMove += OnMouseMove;
-            lbl.MouseUp += OnMouseUp;
+            lbl.Cursor    = Cursors.SizeAll;
+            lbl.MouseDown   += OnMouseDown;
+            lbl.MouseMove   += OnMouseMove;
+            lbl.MouseUp     += OnMouseUp;
             lbl.DoubleClick += OnWidgetDoubleClick;
             Controls.Add(lbl);
 
-            MouseDown += OnMouseDown;
-            MouseMove += OnMouseMove;
-            MouseUp += OnMouseUp;
+            MouseDown   += OnMouseDown;
+            MouseMove   += OnMouseMove;
+            MouseUp     += OnMouseUp;
             DoubleClick += OnWidgetDoubleClick;
-
-            // Position bei jeder Bewegung sofort speichern —
-            // auch bei Prozess-Kill (taskkill /F) geht die Position nicht verloren
             LocationChanged += OnLocationChanged;
 
-            // Jede Sekunde TOPMOST via SetWindowPos neu durchsetzen —
-            // notwendig weil die Taskleiste selbst auch TOPMOST ist
             _topmostTimer = new System.Windows.Forms.Timer();
             _topmostTimer.Interval = 1000;
             _topmostTimer.Tick += OnTopmostTick;
             _topmostTimer.Start();
-        }
-
-        void OnLocationChanged(object sender, EventArgs e)
-        {
-            SavePositionPublic();
-        }
-
-        void OnWidgetDoubleClick(object sender, EventArgs e)
-        {
-            if (RequestHistory != null) RequestHistory(this, EventArgs.Empty);
         }
 
         void OnTopmostTick(object sender, EventArgs e)
@@ -458,6 +735,13 @@ namespace LoginTimer
             SetWindowPos(Handle, HWND_TOPMOST, 0, 0, 0, 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         }
+
+        void OnWidgetDoubleClick(object sender, EventArgs e)
+        {
+            if (RequestHistory != null) RequestHistory(this, EventArgs.Empty);
+        }
+
+        void OnLocationChanged(object sender, EventArgs e) { SavePositionPublic(); }
 
         public void SetTime(string hhmm)
         {
@@ -468,11 +752,26 @@ namespace LoginTimer
 
         void OnMouseDown(object sender, MouseEventArgs e)
         {
-            if (e.Button == MouseButtons.Left) { _dragging = true; _dragStart = e.Location; }
+            if (e.Button == MouseButtons.Left)
+            {
+                _dragging = true;
+                _dragStart = e.Location;
+            }
+            else if (e.Button == MouseButtons.Right && ContextMenuStrip != null)
+            {
+                // Show the same menu as the tray icon.
+                // Convert to screen coords because the sender may be the child label.
+                var src = sender as Control;
+                var screenPt = (src != null)
+                    ? src.PointToScreen(e.Location)
+                    : PointToScreen(e.Location);
+                ContextMenuStrip.Show(screenPt);
+            }
         }
         void OnMouseMove(object sender, MouseEventArgs e)
         {
-            if (_dragging) Location = new Point(Location.X + e.X - _dragStart.X, Location.Y + e.Y - _dragStart.Y);
+            if (_dragging)
+                Location = new Point(Location.X + e.X - _dragStart.X, Location.Y + e.Y - _dragStart.Y);
         }
         void OnMouseUp(object sender, MouseEventArgs e)
         {
@@ -487,6 +786,7 @@ namespace LoginTimer
         {
             try { File.WriteAllText(PosFile, Location.X + "," + Location.Y); } catch { }
         }
+
         void LoadPosition()
         {
             try
@@ -511,7 +811,6 @@ namespace LoginTimer
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            // Never fully close — just hide
             if (e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; Hide(); }
             else { _topmostTimer.Stop(); base.OnFormClosing(e); }
         }
@@ -521,76 +820,97 @@ namespace LoginTimer
     class HistoryForm : Form
     {
         readonly Dictionary<DateTime, double> _snap;
+        readonly Dictionary<string, double>   _todayApps;
         static readonly string[] DE_DAYS = { "Mo", "Di", "Mi", "Do", "Fr", "Sa", "So" };
 
-        public HistoryForm(Dictionary<DateTime, double> snap)
+        public HistoryForm(Dictionary<DateTime, double> snap,
+                           Dictionary<string, double> todayApps)
         {
-            _snap = snap;
+            _snap      = snap;
+            _todayApps = todayApps;
             BuildUI();
         }
 
         void BuildUI()
         {
-            Text = "LoginTimer - Verlauf";
-            Size = new Size(660, 540);
-            MinimumSize = new Size(500, 380);
-            TopMost = true;
-            BackColor = Color.FromArgb(28, 28, 28);
-            ForeColor = Color.FromArgb(200, 200, 200);
-            Font = new Font("Segoe UI", 9f);
+            Text        = "LoginTimer - Verlauf";
+            Size        = new Size(700, 540);
+            MinimumSize = new Size(540, 380);
+            TopMost     = true;
+            BackColor   = Color.FromArgb(28, 28, 28);
+            ForeColor   = Color.FromArgb(200, 200, 200);
+            Font        = new Font("Segoe UI", 9f);
 
             var tabs = new TabControl();
             tabs.Dock = DockStyle.Fill;
             tabs.TabPages.Add(DaysTab());
             tabs.TabPages.Add(WeeksTab());
             tabs.TabPages.Add(MonthsTab());
+            tabs.TabPages.Add(AppsTab());
             Controls.Add(tabs);
         }
 
         DataGridView MakeGrid(string[] headers, int[] widths)
         {
             var grid = new DataGridView();
-            grid.Dock = DockStyle.Fill;
-            grid.ReadOnly = true;
-            grid.AllowUserToAddRows = false;
+            grid.Dock                 = DockStyle.Fill;
+            grid.ReadOnly             = true;
+            grid.AllowUserToAddRows   = false;
             grid.AllowUserToDeleteRows = false;
             grid.AllowUserToResizeRows = false;
-            grid.RowHeadersVisible = false;
-            grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
-            grid.BackgroundColor = Color.FromArgb(35, 35, 35);
-            grid.GridColor = Color.FromArgb(55, 55, 55);
-            grid.BorderStyle = BorderStyle.None;
+            grid.RowHeadersVisible    = false;
+            grid.SelectionMode        = DataGridViewSelectionMode.FullRowSelect;
+            grid.BackgroundColor      = Color.FromArgb(35, 35, 35);
+            grid.GridColor            = Color.FromArgb(55, 55, 55);
+            grid.BorderStyle          = BorderStyle.None;
             grid.EnableHeadersVisualStyles = false;
-            grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
-            grid.ColumnHeadersHeight = 30;
-            grid.RowTemplate.Height = 26;
+            grid.AutoSizeColumnsMode  = DataGridViewAutoSizeColumnsMode.None;
+            grid.ColumnHeadersHeight  = 30;
+            grid.RowTemplate.Height   = 26;
 
-            var cellStyle = new DataGridViewCellStyle();
-            cellStyle.BackColor = Color.FromArgb(35, 35, 35);
-            cellStyle.ForeColor = Color.FromArgb(210, 210, 210);
-            cellStyle.Font = new Font("Consolas", 9.5f);
-            cellStyle.SelectionBackColor = Color.FromArgb(55, 100, 70);
-            cellStyle.SelectionForeColor = Color.White;
-            cellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
-            grid.DefaultCellStyle = cellStyle;
+            var cell = new DataGridViewCellStyle();
+            cell.BackColor          = Color.FromArgb(35, 35, 35);
+            cell.ForeColor          = Color.FromArgb(210, 210, 210);
+            cell.Font               = new Font("Consolas", 9.5f);
+            cell.SelectionBackColor = Color.FromArgb(55, 100, 70);
+            cell.SelectionForeColor = Color.White;
+            cell.Alignment          = DataGridViewContentAlignment.MiddleCenter;
+            grid.DefaultCellStyle   = cell;
 
-            var headerStyle = new DataGridViewCellStyle();
-            headerStyle.BackColor = Color.FromArgb(45, 45, 45);
-            headerStyle.ForeColor = Color.FromArgb(160, 160, 160);
-            headerStyle.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
-            headerStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
-            grid.ColumnHeadersDefaultCellStyle = headerStyle;
+            var hdr = new DataGridViewCellStyle();
+            hdr.BackColor  = Color.FromArgb(45, 45, 45);
+            hdr.ForeColor  = Color.FromArgb(160, 160, 160);
+            hdr.Font       = new Font("Segoe UI", 9f, FontStyle.Bold);
+            hdr.Alignment  = DataGridViewContentAlignment.MiddleCenter;
+            grid.ColumnHeadersDefaultCellStyle = hdr;
 
             for (int i = 0; i < headers.Length; i++)
             {
                 var col = new DataGridViewTextBoxColumn();
                 col.HeaderText = headers[i];
-                col.Width = widths[i];
-                col.SortMode = DataGridViewColumnSortMode.NotSortable;
+                col.Width      = widths[i];
+                col.SortMode   = DataGridViewColumnSortMode.NotSortable;
                 grid.Columns.Add(col);
             }
-
             return grid;
+        }
+
+        // Helper: header bar above a grid
+        Panel MakeBar(string text)
+        {
+            var bar = new Panel();
+            bar.Dock      = DockStyle.Top;
+            bar.Height    = 40;
+            bar.BackColor = Color.FromArgb(35, 35, 35);
+            var lbl = new Label();
+            lbl.Text      = text;
+            lbl.Dock      = DockStyle.Fill;
+            lbl.ForeColor = Color.FromArgb(0, 215, 85);
+            lbl.Font      = new Font("Consolas", 12f, FontStyle.Bold);
+            lbl.TextAlign = ContentAlignment.MiddleLeft;
+            lbl.Padding   = new Padding(14, 0, 0, 0);
+            bar.Controls.Add(lbl);
+            return bar;
         }
 
         TabPage DaysTab()
@@ -598,52 +918,36 @@ namespace LoginTimer
             var tp = new TabPage("  Tage  ");
             tp.BackColor = Color.FromArgb(28, 28, 28);
 
-            // Header-Bar
-            var bar = new Panel();
-            bar.Dock = DockStyle.Top;
-            bar.Height = 40;
-            bar.BackColor = Color.FromArgb(35, 35, 35);
-
             var todaySec = _snap.ContainsKey(DateTime.Today) ? _snap[DateTime.Today] : 0.0;
-            var lbl = new Label();
-            lbl.Text = "Heute:   " + FormatHM(todaySec);
-            lbl.Dock = DockStyle.Fill;
-            lbl.ForeColor = Color.FromArgb(0, 215, 85);
-            lbl.Font = new Font("Consolas", 13f, FontStyle.Bold);
-            lbl.TextAlign = ContentAlignment.MiddleLeft;
-            lbl.Padding = new Padding(14, 0, 0, 0);
-            bar.Controls.Add(lbl);
+            var bar = MakeBar("Heute:   " + FormatHM(todaySec));
 
             var grid = MakeGrid(
-                new string[] { "Datum", "Tag", "Dauer", "Stunden", "+/- Vortag" },
-                new int[]    { 108,    48,    108,     88,         88           });
+                new string[] { "Datum",  "Tag", "Dauer", "Stunden", "+/- Vortag" },
+                new int[]    { 108,       48,    108,     88,         88          });
 
             var sorted = _snap.OrderByDescending(kv => kv.Key).Take(60).ToList();
             for (int i = 0; i < sorted.Count; i++)
             {
-                var kv = sorted[i];
+                var kv  = sorted[i];
                 int dow = (int)kv.Key.DayOfWeek;
-                string dayName = DE_DAYS[dow == 0 ? 6 : dow - 1];
-                string pct = "—";   // —
+                string day = DE_DAYS[dow == 0 ? 6 : dow - 1];
+
+                string pct = "-";
                 if (i + 1 < sorted.Count && sorted[i + 1].Value > 0)
                 {
                     double change = (kv.Value - sorted[i + 1].Value) / sorted[i + 1].Value * 100.0;
                     pct = (change >= 0 ? "+" : "") + ((int)Math.Round(change)).ToString() + "%";
                 }
                 int row = grid.Rows.Add(
-                    kv.Key.ToString("dd.MM.yyyy"),
-                    dayName,
+                    kv.Key.ToString("dd.MM.yyyy"), day,
                     FormatHM(kv.Value),
                     (kv.Value / 3600.0).ToString("F2", CultureInfo.InvariantCulture),
                     pct);
-                if (pct != "—")
+                if (pct != "-")
                     grid.Rows[row].Cells[4].Style.ForeColor =
                         pct.StartsWith("+") ? Color.FromArgb(0, 215, 85) : Color.FromArgb(220, 80, 60);
             }
 
-            // WICHTIG: grid zuerst hinzufuegen, dann bar — WinForms verarbeitet
-            // Dock-Controls von hinten, d.h. bar (Top) wird zuerst platziert
-            // und grid (Fill) fuellt den Rest. Falsche Reihenfolge => Ueberlappung.
             tp.Controls.Add(grid);
             tp.Controls.Add(bar);
             return tp;
@@ -661,32 +965,30 @@ namespace LoginTimer
             var groups = _snap
                 .GroupBy(kv => IsoWeekKey(kv.Key))
                 .OrderByDescending(g => g.Key)
-                .Take(16)
-                .ToList();
+                .Take(16).ToList();
 
             var cal = CultureInfo.InvariantCulture.Calendar;
             for (int i = 0; i < groups.Count; i++)
             {
-                var g = groups[i];
+                var g     = groups[i];
                 double total = g.Sum(kv => kv.Value);
-                int n = g.Count();
-                var rep = g.OrderBy(kv => kv.Key).First().Key;
-                int week = cal.GetWeekOfYear(rep, CalendarWeekRule.FirstFourDayWeek, DayOfWeek.Monday);
-                string label = string.Format("KW {0:D2}  {1}", week, rep.Year);
+                int n     = g.Count();
+                var rep   = g.OrderBy(kv => kv.Key).First().Key;
+                int week  = cal.GetWeekOfYear(rep, CalendarWeekRule.FirstFourDayWeek, DayOfWeek.Monday);
+                string lbl = string.Format("KW {0:D2}  {1}", week, rep.Year);
 
-                string pct = "—";
+                string pct = "-";
                 if (i + 1 < groups.Count)
                 {
-                    double prevTotal = groups[i + 1].Sum(kv => kv.Value);
-                    if (prevTotal > 0)
+                    double prev = groups[i + 1].Sum(kv => kv.Value);
+                    if (prev > 0)
                     {
-                        double change = (total - prevTotal) / prevTotal * 100.0;
+                        double change = (total - prev) / prev * 100.0;
                         pct = (change >= 0 ? "+" : "") + ((int)Math.Round(change)).ToString() + "%";
                     }
                 }
-
-                int row = grid.Rows.Add(label, n, FormatHM(total), FormatHM(total / n), pct);
-                if (pct != "—")
+                int row = grid.Rows.Add(lbl, n, FormatHM(total), FormatHM(total / n), pct);
+                if (pct != "-")
                     grid.Rows[row].Cells[4].Style.ForeColor =
                         pct.StartsWith("+") ? Color.FromArgb(0, 215, 85) : Color.FromArgb(220, 80, 60);
             }
@@ -707,32 +1009,30 @@ namespace LoginTimer
             var groups = _snap
                 .GroupBy(kv => kv.Key.Year * 100 + kv.Key.Month)
                 .OrderByDescending(g => g.Key)
-                .Take(12)
-                .ToList();
+                .Take(12).ToList();
 
             var deDe = CultureInfo.GetCultureInfo("de-DE");
             for (int i = 0; i < groups.Count; i++)
             {
-                var g = groups[i];
+                var g     = groups[i];
                 double total = g.Sum(kv => kv.Value);
-                int n = g.Count();
-                var rep = g.First().Key;
-                string label = new DateTime(rep.Year, rep.Month, 1).ToString("MMMM yyyy", deDe);
+                int n     = g.Count();
+                var rep   = g.First().Key;
+                string lbl = new DateTime(rep.Year, rep.Month, 1).ToString("MMMM yyyy", deDe);
 
-                string pct = "—";
+                string pct = "-";
                 if (i + 1 < groups.Count)
                 {
-                    double prevTotal = groups[i + 1].Sum(kv => kv.Value);
-                    if (prevTotal > 0)
+                    double prev = groups[i + 1].Sum(kv => kv.Value);
+                    if (prev > 0)
                     {
-                        double change = (total - prevTotal) / prevTotal * 100.0;
+                        double change = (total - prev) / prev * 100.0;
                         pct = (change >= 0 ? "+" : "") + ((int)Math.Round(change)).ToString() + "%";
                     }
                 }
-
-                int row = grid.Rows.Add(label, n, FormatHM(total), FormatHM(total / n),
+                int row = grid.Rows.Add(lbl, n, FormatHM(total), FormatHM(total / n),
                     FormatHM(total / Math.Max(1.0, n / 5.0)), pct);
-                if (pct != "—")
+                if (pct != "-")
                     grid.Rows[row].Cells[5].Style.ForeColor =
                         pct.StartsWith("+") ? Color.FromArgb(0, 215, 85) : Color.FromArgb(220, 80, 60);
             }
@@ -741,9 +1041,47 @@ namespace LoginTimer
             return tp;
         }
 
+        TabPage AppsTab()
+        {
+            var tp = new TabPage("  Apps  ");
+            tp.BackColor = Color.FromArgb(28, 28, 28);
+
+            var bar = MakeBar("Heute – Aktivzeit pro Anwendung");
+
+            if (_todayApps.Count == 0)
+            {
+                var noData = new Label();
+                noData.Text      = "Noch keine App-Daten fuer heute.\n" +
+                                   "Die Aufzeichnung laeuft im Hintergrund (alle 10 s).";
+                noData.Dock      = DockStyle.Fill;
+                noData.ForeColor = Color.FromArgb(120, 120, 120);
+                noData.Font      = new Font("Segoe UI", 9.5f);
+                noData.TextAlign = ContentAlignment.MiddleCenter;
+                tp.Controls.Add(noData);
+                tp.Controls.Add(bar);
+                return tp;
+            }
+
+            var grid = MakeGrid(
+                new string[] { "Anwendung", "Zeit",  "Stunden" },
+                new int[]    { 240,          120,     110      });
+
+            foreach (var kv in _todayApps.OrderByDescending(a => a.Value))
+            {
+                grid.Rows.Add(
+                    WindowHelper.GetFriendlyName(kv.Key),
+                    FormatHM(kv.Value),
+                    (kv.Value / 3600.0).ToString("F2", CultureInfo.InvariantCulture));
+            }
+
+            tp.Controls.Add(grid);
+            tp.Controls.Add(bar);
+            return tp;
+        }
+
         static int IsoWeekKey(DateTime d)
         {
-            var cal = CultureInfo.InvariantCulture.Calendar;
+            var cal  = CultureInfo.InvariantCulture.Calendar;
             int week = cal.GetWeekOfYear(d, CalendarWeekRule.FirstFourDayWeek, DayOfWeek.Monday);
             return d.Year * 100 + week;
         }
