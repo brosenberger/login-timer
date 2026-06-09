@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+
+  <!--
+    LoginTimer MSI – WiX 3.x
+    Installiert per-User (kein Admin noetig):
+      EXE  →  %LocalAppData%\LoginTimer\LoginTimer.exe
+      LNK  →  %AppData%\...\Startup\LoginTimer.lnk  (Autostart)
+      LNK  →  Desktop\LoginTimer.lnk
+  -->
+  <Product Id="*"
+           Name="LoginTimer"
+           Language="1031"
+           Version="1.0.0.0"
+           Manufacturer="brosenberger"
+           UpgradeCode="{6F14B2A1-3C7D-4E8F-9A0B-1C2D3E4F5A6B}">
+
+    <Package InstallerVersion="301"
+             Compressed="yes"
+             InstallScope="perUser"
+             Description="LoginTimer – Eingeloggte Zeit pro Tag verfolgen"
+             Comments="Freeware – keine Einschraenkungen" />
+
+    <!-- Aeltere Version automatisch ersetzen -->
+    <MajorUpgrade DowngradeErrorMessage="Eine neuere Version von LoginTimer ist bereits installiert." />
+
+    <!-- CAB in MSI einbetten (eine Datei reicht fuer Weitergabe) -->
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Pflicht: EXE + Autostart -->
+    <Feature Id="ProductFeature" Title="LoginTimer" Level="1"
+             Description="LoginTimer Anwendung mit Autostart bei Windows-Anmeldung."
+             Absent="disallow">
+      <ComponentRef Id="MainExecutable"    />
+      <ComponentRef Id="AutostartShortcut" />
+
+      <!-- Optional: Desktop-Verknuepfung (Standard: an) -->
+      <Feature Id="DesktopFeature" Title="Desktop-Verkn&#252;pfung" Level="2"
+               Description="Verkn&#252;pfung auf dem Desktop erstellen.">
+        <ComponentRef Id="DesktopShortcut" />
+      </Feature>
+    </Feature>
+
+    <!-- Feature-Tree-Dialog: Willkommen > Lizenz > Komponenten > Installieren > Fertig -->
+    <UIRef Id="WixUI_FeatureTree" />
+    <WixVariable Id="WixUILicenseRtf" Value="license.rtf" />
+
+  </Product>
+
+  <!-- ── Verzeichnisstruktur ────────────────────────────────────────────── -->
+  <Fragment>
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <!-- %LocalAppData%\LoginTimer\ -->
+      <Directory Id="LocalAppDataFolder">
+        <Directory Id="INSTALLFOLDER" Name="LoginTimer" />
+      </Directory>
+      <!-- %AppData%\Microsoft\Windows\Start Menu\Programs\Startup -->
+      <Directory Id="StartupFolder" />
+      <!-- Desktop des Benutzers -->
+      <Directory Id="DesktopFolder" />
+    </Directory>
+  </Fragment>
+
+  <!-- ── Komponenten ────────────────────────────────────────────────────── -->
+  <Fragment>
+
+    <!-- LoginTimer.exe -->
+    <Component Id="MainExecutable" Directory="INSTALLFOLDER"
+               Guid="{A2B3C4D5-E6F7-8901-A2B3-C4D5E6F78901}">
+      <File Id="LoginTimerEXE" Source="LoginTimer.exe" KeyPath="yes" />
+    </Component>
+
+    <!-- Autostart-Verknuepfung im Startup-Ordner -->
+    <Component Id="AutostartShortcut" Directory="StartupFolder"
+               Guid="{B3C4D5E6-F7A8-9012-B3C4-D5E6F7A89012}">
+      <Shortcut Id="AutostartSC"
+                Name="LoginTimer"
+                Description="LoginTimer – Eingeloggte Zeit verfolgen"
+                Target="[INSTALLFOLDER]LoginTimer.exe"
+                WorkingDirectory="INSTALLFOLDER" />
+      <!-- Registry-Eintrag als KeyPath (WiX-Anforderung fuer Shortcut-Komponenten) -->
+      <RegistryValue Root="HKCU"
+                     Key="Software\brosenberger\LoginTimer"
+                     Name="Autostart" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <!-- Desktop-Verknuepfung -->
+    <Component Id="DesktopShortcut" Directory="DesktopFolder"
+               Guid="{C4D5E6F7-A8B9-0123-C4D5-E6F7A8B90123}">
+      <Shortcut Id="DesktopSC"
+                Name="LoginTimer"
+                Description="LoginTimer starten"
+                Target="[INSTALLFOLDER]LoginTimer.exe"
+                WorkingDirectory="INSTALLFOLDER" />
+      <RegistryValue Root="HKCU"
+                     Key="Software\brosenberger\LoginTimer"
+                     Name="Desktop" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+  </Fragment>
+
+</Wix>
