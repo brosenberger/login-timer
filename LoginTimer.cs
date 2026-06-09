@@ -428,7 +428,9 @@ namespace LoginTimer
             _appTracker = new AppTracker(appDataPath);
 
             _segStart = DateTime.Now;
-            _syncCtx  = System.Threading.SynchronizationContext.Current;
+            // _syncCtx is captured lazily on the first timer tick (see OnAppTick),
+            // because SynchronizationContext.Current is null here — Application.Run
+            // installs the WinForms context only after the constructor returns.
 
             _tray = new NotifyIcon();
             _tray.ContextMenuStrip = BuildMenu();
@@ -469,6 +471,14 @@ namespace LoginTimer
         void OnAppTick(object sender, EventArgs e)
         {
             if (_segStart == null) return; // locked / disconnected
+
+            // Lazy capture: Application.Run installs the WinForms sync context
+            // only after the constructor returns, so we grab it here on the first tick.
+            if (_syncCtx == null)
+                _syncCtx = System.Threading.SynchronizationContext.Current;
+            var ctx = _syncCtx;
+            if (ctx == null) return; // not ready yet, skip this tick
+
             // Run the P/Invoke scan on a thread-pool thread so the UI stays
             // responsive (window dragging, Chrome tab switching, etc.).
             double tickSecs = _appTimer.Interval / 1000.0;
@@ -476,7 +486,7 @@ namespace LoginTimer
             {
                 var apps = WindowHelper.GetActiveAppsPerMonitor();
                 if (apps.Count == 0) return;
-                _syncCtx.Post(delegate
+                ctx.Post(delegate
                 {
                     // Back on UI thread: safe to mutate AppTracker
                     if (_segStart != null)
