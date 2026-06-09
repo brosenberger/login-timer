@@ -64,10 +64,7 @@ set "NOPAUSE="
 
 rem ── 4/4  ZIP  ────────────────────────────────────────────────────────────
 echo [4/4] Erstelle LoginTimer.zip ...
-powershell -NoProfile -Command ^
-  "Compress-Archive -Force ^
-   -Path '%~dp0dist\LoginTimer.exe','%~dp0dist\LoginTimer.msi','%~dp0dist\Installer.exe' ^
-   -DestinationPath '%~dp0dist\LoginTimer.zip'"
+powershell -NoProfile -Command "Compress-Archive -Force -Path '%~dp0dist\LoginTimer.exe','%~dp0dist\LoginTimer.msi','%~dp0dist\Installer.exe' -DestinationPath '%~dp0dist\LoginTimer.zip'"
 if !ERRORLEVEL! neq 0 (
     echo.
     echo WARNUNG: ZIP konnte nicht erstellt werden (PowerShell 5+ erforderlich).
