@@ -12,10 +12,11 @@ echo.
 
 rem ── Cleanup ─────────────────────────────────────────────────────────────
 echo Bereinige dist\ ...
-if exist "%~dp0dist\LoginTimer.exe" del /f "%~dp0dist\LoginTimer.exe"
-if exist "%~dp0dist\LoginTimer.msi" del /f "%~dp0dist\LoginTimer.msi"
-if exist "%~dp0dist\Installer.exe"  del /f "%~dp0dist\Installer.exe"
-if exist "%~dp0dist\LoginTimer.zip" del /f "%~dp0dist\LoginTimer.zip"
+if exist "%~dp0dist\LoginTimer.exe"    del /f "%~dp0dist\LoginTimer.exe"
+if exist "%~dp0dist\LoginTimer.msi"    del /f "%~dp0dist\LoginTimer.msi"
+if exist "%~dp0dist\LoginTimer.wixpdb" del /f "%~dp0dist\LoginTimer.wixpdb"
+if exist "%~dp0dist\Installer.exe"     del /f "%~dp0dist\Installer.exe"
+if exist "%~dp0dist\LoginTimer.zip"    del /f "%~dp0dist\LoginTimer.zip"
 echo.
 
 rem Suppress interactive pauses in sub-scripts

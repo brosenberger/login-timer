@@ -54,8 +54,8 @@ if !ERRORLEVEL! neq 0 (
     exit /b 1
 )
 
-if exist "LoginTimer.wixobj" del "LoginTimer.wixobj"
-if exist "LoginTimer.wixpdb" del "LoginTimer.wixpdb"
+if exist "LoginTimer.wixobj"          del "LoginTimer.wixobj"
+if exist "..\dist\LoginTimer.wixpdb"  del "..\dist\LoginTimer.wixpdb"
 
 popd
 
