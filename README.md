@@ -116,4 +116,4 @@ Format: `yyyy-MM-dd,seconds` — one line per day. Safe to copy or delete indivi
 
 ## License
 
-Freeware — free to use and distribute. No warranty.
+[MIT License](LICENSE) — Copyright (c) 2026 brosenberger
