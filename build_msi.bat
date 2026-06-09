@@ -30,11 +30,11 @@ if not exist "!DIR!LoginTimer.exe" (
 )
 
 echo Schritt 1/2: candle.exe
-"!WIX_BIN!\candle.exe" "!DIR!LoginTimer.wxs" -out "!DIR!LoginTimer.wixobj" -nologo
+"!WIX_BIN!\candle.exe" "!DIR!LoginTimer.wxs" -ext WixUtilExtension -out "!DIR!LoginTimer.wixobj" -nologo
 if !ERRORLEVEL! neq 0 ( echo [FEHLER] candle fehlgeschlagen & pause & exit /b 1 )
 
 echo Schritt 2/2: light.exe
-"!WIX_BIN!\light.exe" "!DIR!LoginTimer.wixobj" -ext WixUIExtension -out "!DIR!LoginTimer.msi" -nologo -sval
+"!WIX_BIN!\light.exe" "!DIR!LoginTimer.wixobj" -ext WixUIExtension -ext WixUtilExtension -out "!DIR!LoginTimer.msi" -nologo -sval
 if !ERRORLEVEL! neq 0 ( echo [FEHLER] light fehlgeschlagen & pause & exit /b 1 )
 
 if exist "!DIR!LoginTimer.wixobj" del "!DIR!LoginTimer.wixobj"

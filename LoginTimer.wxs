@@ -41,8 +41,20 @@
       </Feature>
     </Feature>
 
+    <!-- "LoginTimer jetzt starten" checkbox on the Finish page -->
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="LoginTimer jetzt starten" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX"     Value="1" />
+    <Property Id="WixShellExecTarget" Value="[INSTALLFOLDER]LoginTimer.exe" />
+    <CustomAction Id="LaunchApp" BinaryKey="WixCA" DllEntry="WixShellExec" Impersonate="yes" />
+
     <!-- Feature-Tree-Dialog: Willkommen > Lizenz > Komponenten > Installieren > Fertig -->
-    <UIRef Id="WixUI_FeatureTree" />
+    <UI>
+      <UIRef Id="WixUI_FeatureTree" />
+      <!-- Fire LaunchApp when Finish is clicked and the checkbox is ticked -->
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApp">
+        WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed
+      </Publish>
+    </UI>
     <WixVariable Id="WixUILicenseRtf" Value="license.rtf" />
 
   </Product>
