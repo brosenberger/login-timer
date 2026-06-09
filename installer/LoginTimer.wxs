@@ -12,7 +12,7 @@
   <Product Id="*"
            Name="LoginTimer"
            Language="1031"
-           Version="1.0.0.0"
+           Version="1.1.0.0"
            Manufacturer="brosenberger"
            UpgradeCode="{6F14B2A1-3C7D-4E8F-9A0B-1C2D3E4F5A6B}">
 

@@ -1,5 +1,7 @@
 # LoginTimer
 
+**Version 1.1.0**
+
 Windows system tray app that tracks your logged-in time per day — automatically pauses when the screen is locked.
 
 ## Screenshots
@@ -39,7 +41,7 @@ Last 12 months — total, days tracked, average per day, average per week, and %
 - **Per-app tracking** — every 10 s the topmost visible window per monitor is recorded; works correctly with video on a second monitor while working on the first
 - **Double-click** widget or tray icon to open history
 - **Plain CSV data store** — `%AppData%\LoginTimer\data.csv` and `apps.csv` (easy to inspect or back up)
-- **No installation required** — uses only the .NET Framework already built into Windows 10/11
+- **No admin rights required** — MSI installs per-user; portable EXE needs no installer at all; uses only the .NET Framework built into Windows 10/11
 
 ---
 
@@ -94,13 +96,14 @@ No Visual Studio required — the build uses the C# compiler that ships with Win
 build-all.bat
 ```
 
-Produces all three artifacts in `dist\`:
+Produces all four artifacts in `dist\`:
 
 | Artifact | Used for |
 |---|---|
 | `dist\LoginTimer.exe` | The application itself |
 | `dist\LoginTimer.msi` | Standard install on normal machines |
 | `dist\Installer.exe` | Install on machines with `DisableMSI` Group Policy |
+| `dist\LoginTimer.zip` | All three bundled — attach to a GitHub release |
 
 Requires [WiX Toolset v3.x](https://github.com/wixtoolset/wix3/releases/latest)
 (one-time install, ~30 MB) for the MSI step.
