@@ -1,6 +1,9 @@
 @echo off
 setlocal enabledelayedexpansion
 
+rem Kompiliert nur Installer.exe -> dist\ (startet NICHT).
+rem Wird von scripts\install.bat und build-all.bat aufgerufen.
+
 set "ROOT=%~dp0.."
 
 set "CSC="
@@ -14,27 +17,21 @@ if not defined CSC (
 )
 
 if not defined CSC (
-    echo FEHLER: csc.exe nicht gefunden > "!ROOT!\build.log"
+    echo FEHLER: csc.exe nicht gefunden.
     exit /b 1
 )
 
 rem Cleanup stale output before build
-if exist "!ROOT!\dist\LoginTimer.exe" del /f "!ROOT!\dist\LoginTimer.exe"
+if exist "!ROOT!\dist\Installer.exe" del /f "!ROOT!\dist\Installer.exe"
 
-echo Compiler: !CSC! > "!ROOT!\build.log"
-echo. >> "!ROOT!\build.log"
-
-"!CSC!" /target:winexe /out:"!ROOT!\dist\LoginTimer.exe" ^
+"!CSC!" /target:winexe /out:"!ROOT!\dist\Installer.exe" ^
     /r:System.Windows.Forms.dll ^
     /r:System.Drawing.dll ^
-    "!ROOT!\src\LoginTimer.cs" >> "!ROOT!\build.log" 2>&1
+    "!ROOT!\installer\Installer.cs" > "!ROOT!\install.log" 2>&1
 
 if !ERRORLEVEL! neq 0 (
-    echo. >> "!ROOT!\build.log"
-    echo FEHLER beim Kompilieren. >> "!ROOT!\build.log"
+    echo FEHLER beim Kompilieren von Installer.exe - siehe install.log
     exit /b 1
 )
 
-echo. >> "!ROOT!\build.log"
-echo Fertig dist\LoginTimer.exe wurde erstellt. >> "!ROOT!\build.log"
 exit /b 0

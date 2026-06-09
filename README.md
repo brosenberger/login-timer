@@ -67,27 +67,52 @@ Download `LoginTimer.msi` from the [latest release](../../releases/latest), doub
 Download `LoginTimer.exe`, place it anywhere, run it. No installer needed.  
 To autostart: drop a shortcut into `shell:startup`.
 
+### Option C — Lightweight Installer (corporate / restricted machines)
+
+Some corporate environments apply a Group Policy (`DisableMSI`) that blocks
+Windows Installer entirely — you get *"The system administrator has set policies
+to prevent this installation"* when opening the MSI.
+
+Use `Installer.exe` instead:
+
+1. Copy **`LoginTimer.exe`** and **`Installer.exe`** to the same folder.
+2. Run `Installer.exe` — no admin rights, no Windows Installer, no Group Policy
+   restrictions.
+
+`Installer.exe` copies the files to `%LocalAppData%\LoginTimer\` and creates
+the Autostart shortcut exactly like the MSI does, but as a plain .NET EXE.
+
 ---
 
 ## Build from source
 
 No Visual Studio required — the build uses the C# compiler that ships with Windows.
 
-```bat
-scripts\build.bat
-```
-
-Output: `LoginTimer.exe`
-
-### Build the MSI installer
-
-Requires [WiX Toolset v3.x](https://github.com/wixtoolset/wix3/releases/latest) (one-time install, ~30 MB).
+### Build everything at once
 
 ```bat
-scripts\build_msi.bat
+build-all.bat
 ```
 
-Output: `LoginTimer.msi` — self-contained, no prerequisites on the target machine.
+Produces all three artifacts in `dist\`:
+
+| Artifact | Used for |
+|---|---|
+| `dist\LoginTimer.exe` | The application itself |
+| `dist\LoginTimer.msi` | Standard install on normal machines |
+| `dist\Installer.exe` | Install on machines with `DisableMSI` Group Policy |
+
+Requires [WiX Toolset v3.x](https://github.com/wixtoolset/wix3/releases/latest)
+(one-time install, ~30 MB) for the MSI step.
+
+### Build individual artifacts
+
+```bat
+scripts\build.bat          # LoginTimer.exe only
+scripts\build_msi.bat      # LoginTimer.msi only  (needs LoginTimer.exe first)
+scripts\build-installer.bat  # Installer.exe only  (compile; does not run it)
+scripts\install.bat        # compile Installer.exe then launch it immediately
+```
 
 ---
 
