@@ -41,6 +41,7 @@ Last 12 months — total, days tracked, average per day, average per week, and %
 - **Per-app tracking** — every 10 s the topmost visible window per monitor is recorded; works correctly with video on a second monitor while working on the first
 - **Double-click** widget or tray icon to open history
 - **Plain CSV data store** — `%AppData%\LoginTimer\data.csv` and `apps.csv` (easy to inspect or back up)
+- **Update check & self-update** — version shown in the tray menu; checks GitHub releases on startup (balloon notification) and on demand via "Auf Updates pruefen...". One click downloads the new `LoginTimer.exe` (sha256-verified), swaps it in place and restarts — no installer needed
 - **No admin rights required** — MSI installs per-user; portable EXE needs no installer at all; uses only the .NET Framework built into Windows 10/11
 
 ---

@@ -8,6 +8,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Version info & update check** (#3)
+  - Version is stamped into `LoginTimer.exe` (assembly attributes) from a single `Program.Version` constant and shown as a disabled "Version x.y.z" entry in the tray context menu
+  - "Auf Updates pruefen..." menu entry queries the GitHub releases API (`releases/latest`) and reports the result in a dialog; silent automatic check 15 s after startup shows a tray balloon when an update exists (clicking it opens the same dialog)
+  - **EXE self-update**: when the release ships a `LoginTimer.exe` asset, "Ja" downloads it, verifies the GitHub-provided sha256 digest, swaps the running EXE (rename-to-`.old` trick), restarts with `--updated` (new instance waits up to 15 s for the single-instance mutex) and cleans up the `.old` file on next start; on any failure it rolls back and offers the release page instead
+  - Works for all three install modes (MSI → `%LocalAppData%`, fallback installer, portable). Known cosmetic limitation: after a self-update, the *Programs and Features* entry of an MSI install keeps the old version number until the next MSI release is installed; an MSI "repair" would restore the old EXE
+  - No MSI auto-download/install (deliberate: avoids `DisableMSI`-policy failure modes)
 - **Farben panel** — full color-customization dialog accessible via tray context menu ("Farben…") and History window button
   - 13 individually configurable color slots: icon background, accent color, overlay background, history background, table background, grid lines, column header background, cell text, header text, form text, placeholder text, selection background, negative-change red
   - Per-slot color picker (`ColorDialog`) with live swatch preview in the settings dialog
