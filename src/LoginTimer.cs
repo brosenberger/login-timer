@@ -6,11 +6,21 @@ using System.Drawing.Text;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Win32;
+
+// Version is stamped into the EXE (file properties) from the single
+// Program.Version constant below — keep installer/LoginTimer.wxs in sync.
+[assembly: AssemblyTitle("LoginTimer")]
+[assembly: AssemblyProduct("LoginTimer")]
+[assembly: AssemblyVersion(LoginTimer.Program.Version + ".0")]
+[assembly: AssemblyFileVersion(LoginTimer.Program.Version + ".0")]
 
 namespace LoginTimer
 {
@@ -396,9 +406,70 @@ namespace LoginTimer
         }
     }
 
+    // ── Update check via GitHub releases ─────────────────────────────────────
+    static class UpdateChecker
+    {
+        public const string ReleasesPage =
+            "https://github.com/brosenberger/login-timer/releases/latest";
+        const string ApiUrl =
+            "https://api.github.com/repos/brosenberger/login-timer/releases/latest";
+
+        /// <summary>
+        /// Fetches the latest release tag on a thread-pool thread.
+        /// Callback (raised on the worker thread — marshal in the caller):
+        /// null = check failed, "" = up to date, "x.y.z" = newer version.
+        /// </summary>
+        public static void CheckAsync(Action<string> onResult)
+        {
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                string latest = FetchLatestVersion();
+                string result;
+                if (latest == null)
+                    result = null;
+                else
+                    result = IsNewer(latest, Program.Version) ? latest : "";
+                onResult(result);
+            });
+        }
+
+        static string FetchLatestVersion()
+        {
+            try
+            {
+                // GitHub enforces TLS 1.2; .NET 4.x defaults may not enable it.
+                ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;
+                var req = (HttpWebRequest)WebRequest.Create(ApiUrl);
+                req.UserAgent = "LoginTimer/" + Program.Version;
+                req.Accept    = "application/vnd.github+json";
+                req.Timeout   = 10000;
+                using (var resp = req.GetResponse())
+                using (var reader = new StreamReader(resp.GetResponseStream()))
+                {
+                    var json = reader.ReadToEnd();
+                    var m = Regex.Match(json,
+                        "\"tag_name\"\\s*:\\s*\"v?([0-9]+(?:\\.[0-9]+)+)\"");
+                    return m.Success ? m.Groups[1].Value : null;
+                }
+            }
+            catch { return null; }
+        }
+
+        static bool IsNewer(string remote, string local)
+        {
+            try { return new Version(remote) > new Version(local); }
+            catch { return false; }
+        }
+    }
+
     // ── Entry point ───────────────────────────────────────────────────────────
     static class Program
     {
+        // Single source of truth for the app version.
+        // Release checklist: keep installer/LoginTimer.wxs Version="x.y.z.0",
+        // CHANGELOG.md and README.md in sync (see AGENTS.md).
+        public const string Version = "1.1.1";
+
         static Mutex _mutex = new Mutex(true, "LoginTimerMutex_v1");
 
         static readonly string ErrorLog =
@@ -523,6 +594,7 @@ namespace LoginTimer
         NotifyIcon  _tray;
         System.Windows.Forms.Timer _timer;       // 30 s: checkpoint + icon update
         System.Windows.Forms.Timer _appTimer;    // 10 s: per-monitor app tracking
+        System.Windows.Forms.Timer _updateTimer; // one-shot: silent update check after startup
         Icon        _currentIcon;
         Bitmap      _iconBitmap;  // must stay alive while icon handle is in use
         OverlayForm _overlay;
@@ -559,6 +631,7 @@ namespace LoginTimer
             _tray = new NotifyIcon();
             _tray.ContextMenuStrip = BuildMenu();
             _tray.DoubleClick += OnDoubleClick;
+            _tray.BalloonTipClicked += OnBalloonClicked;
             _tray.Text = "LoginTimer";
 
             UpdateIcon();
@@ -579,6 +652,13 @@ namespace LoginTimer
             _appTimer.Interval = 10000;
             _appTimer.Tick += OnAppTick;
             _appTimer.Start();
+
+            // One-shot, delayed so startup stays fast and the WinForms
+            // SynchronizationContext is installed by the time it fires.
+            _updateTimer = new System.Windows.Forms.Timer();
+            _updateTimer.Interval = 15000;
+            _updateTimer.Tick += OnUpdateTimerTick;
+            _updateTimer.Start();
 
             SystemEvents.SessionSwitch += OnSessionSwitch;
             Application.ApplicationExit += OnExit;
@@ -748,8 +828,85 @@ namespace LoginTimer
             m.Items.Add(overlayItem);
             m.Items.Add("Farben…", null, OnFarben);
             m.Items.Add(new ToolStripSeparator());
+            var versionItem = new ToolStripMenuItem("Version " + Program.Version);
+            versionItem.Enabled = false;
+            m.Items.Add(versionItem);
+            m.Items.Add("Auf Updates pruefen...", null, OnCheckUpdates);
+            m.Items.Add(new ToolStripSeparator());
             m.Items.Add("Beenden", null, OnQuit);
             return m;
+        }
+
+        void OnUpdateTimerTick(object sender, EventArgs e)
+        {
+            _updateTimer.Stop(); // one-shot
+            RunUpdateCheck(false);
+        }
+
+        void OnCheckUpdates(object sender, EventArgs e) { RunUpdateCheck(true); }
+
+        // interactive=true → report every outcome (dialog);
+        // interactive=false → balloon only when an update exists.
+        void RunUpdateCheck(bool interactive)
+        {
+            var ctx = System.Threading.SynchronizationContext.Current;
+            if (ctx == null) return;
+            UpdateChecker.CheckAsync(delegate(string result)
+            {
+                ctx.Post(delegate
+                {
+                    if (_exiting) return;
+                    OnUpdateResult(result, interactive);
+                }, null);
+            });
+        }
+
+        void OnUpdateResult(string result, bool interactive)
+        {
+            if (!string.IsNullOrEmpty(result))
+            {
+                if (interactive)
+                {
+                    var answer = MessageBox.Show(
+                        string.Format(
+                            "Version {0} ist verfuegbar (installiert: {1}).\n\n" +
+                            "Release-Seite jetzt oeffnen?",
+                            result, Program.Version),
+                        "LoginTimer - Update verfuegbar",
+                        MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+                    if (answer == DialogResult.Yes)
+                        OpenReleasesPage();
+                }
+                else
+                {
+                    _tray.BalloonTipTitle = "LoginTimer - Update verfuegbar";
+                    _tray.BalloonTipText  = string.Format(
+                        "Version {0} ist verfuegbar (installiert: {1}). " +
+                        "Klicken oeffnet die Release-Seite.",
+                        result, Program.Version);
+                    _tray.BalloonTipIcon  = ToolTipIcon.Info;
+                    _tray.ShowBalloonTip(10000);
+                }
+                return;
+            }
+
+            if (!interactive) return;
+
+            if (result == null)
+                MessageBox.Show(
+                    "Update-Pruefung fehlgeschlagen (keine Verbindung zu GitHub?).",
+                    "LoginTimer", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            else
+                MessageBox.Show(
+                    string.Format("LoginTimer {0} ist aktuell.", Program.Version),
+                    "LoginTimer", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        void OnBalloonClicked(object sender, EventArgs e) { OpenReleasesPage(); }
+
+        static void OpenReleasesPage()
+        {
+            try { Process.Start(UpdateChecker.ReleasesPage); } catch { }
         }
 
         void OnShowHistory(object sender, EventArgs e) { ShowHistory(); }
@@ -811,6 +968,7 @@ namespace LoginTimer
             CommitSegment();
             _timer.Stop();
             _appTimer.Stop();
+            _updateTimer.Stop();
             SystemEvents.SessionSwitch -= OnSessionSwitch;
             _tray.Visible = false;
             _tray.Dispose();

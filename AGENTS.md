@@ -105,6 +105,7 @@ All `@param` / `@return` in interface PHPDoc → not applicable (C# project).
 | `WindowHelper` | Static. Z-order walk via `GetTopWindow`/`GetWindow`; returns topmost visible non-minimised non-system window per monitor. PID cached per tick. |
 | `AppTracker` | In-memory `Dictionary<DateTime, Dictionary<string, double>>`. `RecordTick()`, `Save()`, `Load()`. CSV: `%AppData%\LoginTimer\apps.csv` |
 | `DayData` | Login-time storage. CSV: `%AppData%\LoginTimer\data.csv` (`yyyy-MM-dd,seconds`) |
+| `UpdateChecker` | Static. Queries GitHub `releases/latest` API on a ThreadPool thread, regex-parses `tag_name`, compares against `Program.Version`. Forces TLS 1.2 (`SecurityProtocolType 3072`). |
 | `TrayApp` | `ApplicationContext`. Owns tray icon, 30 s timer, 10 s app timer, `OverlayForm`, `AnchorForm`. |
 | `OverlayForm` | Floating widget. `WS_EX_NOACTIVATE \| WS_EX_TOOLWINDOW`. `SetWindowPos(HWND_TOPMOST)` re-asserted every 1 s. Position saved on `LocationChanged`. |
 | `AnchorForm` | Hidden 1×1 window, `Text="LoginTimer"`, no `WS_EX_TOOLWINDOW`. Exists solely so Restart Manager and `util:CloseApplication` can identify the running process. |
@@ -153,10 +154,11 @@ Detect: `reg query "HKLM\SOFTWARE\Policies\Microsoft\Windows\Installer" /v Disab
 `LoginTimer.exe`; copies it to `%LocalAppData%\LoginTimer\` and creates the Startup shortcut.
 
 ### Version bumping (release checklist)
-Two files must stay in sync:
+Three files must stay in sync:
 
 | File | Field |
 |---|---|
+| `src/LoginTimer.cs` | `Program.Version = "x.y.z"` (three-part; feeds menu, assembly attributes, update check) |
 | `installer/LoginTimer.wxs` | `Version="x.y.z.0"` (four-part) |
 | `CHANGELOG.md` | new `## [x.y.z] — YYYY-MM-DD` section |
 

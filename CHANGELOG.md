@@ -8,6 +8,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Version info & update check** (#3)
+  - Version is stamped into `LoginTimer.exe` (assembly attributes) from a single `Program.Version` constant and shown as a disabled "Version x.y.z" entry in the tray context menu
+  - "Auf Updates pruefen..." menu entry queries the GitHub releases API (`releases/latest`) and reports the result in a dialog; on a newer version it offers to open the release page
+  - Silent automatic check 15 s after startup; when an update exists, a tray balloon notification appears — clicking it opens the GitHub release page
+  - No auto-download/install of the MSI (deliberate: avoids `DisableMSI`-policy failure modes); update remains a manual download
 - **Farben panel** — full color-customization dialog accessible via tray context menu ("Farben…") and History window button
   - 13 individually configurable color slots: icon background, accent color, overlay background, history background, table background, grid lines, column header background, cell text, header text, form text, placeholder text, selection background, negative-change red
   - Per-slot color picker (`ColorDialog`) with live swatch preview in the settings dialog
