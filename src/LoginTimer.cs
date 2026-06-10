@@ -406,7 +406,14 @@ namespace LoginTimer
         }
     }
 
-    // ── Update check via GitHub releases ─────────────────────────────────────
+    // ── Update check + EXE self-update via GitHub releases ───────────────────
+    class UpdateInfo
+    {
+        public string Version; // "" = up to date, "x.y.z" = newer available
+        public string ExeUrl;  // LoginTimer.exe asset URL (null = not in release)
+        public string Sha256;  // expected asset digest (null = not provided)
+    }
+
     static class UpdateChecker
     {
         public const string ReleasesPage =
@@ -415,25 +422,20 @@ namespace LoginTimer
             "https://api.github.com/repos/brosenberger/login-timer/releases/latest";
 
         /// <summary>
-        /// Fetches the latest release tag on a thread-pool thread.
+        /// Fetches the latest release on a thread-pool thread.
         /// Callback (raised on the worker thread — marshal in the caller):
-        /// null = check failed, "" = up to date, "x.y.z" = newer version.
+        /// null = check failed; Version == "" = up to date; otherwise a newer
+        /// version, with ExeUrl/Sha256 set when the release ships LoginTimer.exe.
         /// </summary>
-        public static void CheckAsync(Action<string> onResult)
+        public static void CheckAsync(Action<UpdateInfo> onResult)
         {
             ThreadPool.QueueUserWorkItem(delegate
             {
-                string latest = FetchLatestVersion();
-                string result;
-                if (latest == null)
-                    result = null;
-                else
-                    result = IsNewer(latest, Program.Version) ? latest : "";
-                onResult(result);
+                onResult(FetchLatest());
             });
         }
 
-        static string FetchLatestVersion()
+        static UpdateInfo FetchLatest()
         {
             try
             {
@@ -443,14 +445,36 @@ namespace LoginTimer
                 req.UserAgent = "LoginTimer/" + Program.Version;
                 req.Accept    = "application/vnd.github+json";
                 req.Timeout   = 10000;
+                string json;
                 using (var resp = req.GetResponse())
                 using (var reader = new StreamReader(resp.GetResponseStream()))
+                    json = reader.ReadToEnd();
+
+                var m = Regex.Match(json,
+                    "\"tag_name\"\\s*:\\s*\"v?([0-9]+(?:\\.[0-9]+)+)\"");
+                if (!m.Success) return null;
+                var latest = m.Groups[1].Value;
+                if (!IsNewer(latest, Program.Version))
+                    return new UpdateInfo { Version = "" };
+
+                var info = new UpdateInfo { Version = latest };
+                // Within an asset object the fields appear in the order
+                // name → digest → browser_download_url, so scoping the search
+                // to the substring after our asset's name keeps both matches
+                // on the right asset.
+                var nameMatch = Regex.Match(json,
+                    "\"name\"\\s*:\\s*\"LoginTimer\\.exe\"");
+                if (nameMatch.Success)
                 {
-                    var json = reader.ReadToEnd();
-                    var m = Regex.Match(json,
-                        "\"tag_name\"\\s*:\\s*\"v?([0-9]+(?:\\.[0-9]+)+)\"");
-                    return m.Success ? m.Groups[1].Value : null;
+                    var tail = json.Substring(nameMatch.Index);
+                    var dm = Regex.Match(tail,
+                        "\"digest\"\\s*:\\s*\"sha256:([0-9a-fA-F]{64})\"");
+                    if (dm.Success) info.Sha256 = dm.Groups[1].Value;
+                    var um = Regex.Match(tail,
+                        "\"browser_download_url\"\\s*:\\s*\"([^\"]+)\"");
+                    if (um.Success) info.ExeUrl = um.Groups[1].Value;
                 }
+                return info;
             }
             catch { return null; }
         }
@@ -459,6 +483,72 @@ namespace LoginTimer
         {
             try { return new Version(remote) > new Version(local); }
             catch { return false; }
+        }
+
+        /// <summary>
+        /// Downloads the EXE asset next to the running EXE, verifies the
+        /// digest, then swaps it in: a running EXE is locked against writes
+        /// but CAN be renamed, so current → .old, new → current.
+        /// Throws on failure (download dir cleaned up, swap rolled back).
+        /// </summary>
+        public static void DownloadAndSwap(UpdateInfo info)
+        {
+            var exePath = Application.ExecutablePath;
+            var newPath = Path.Combine(Path.GetDirectoryName(exePath),
+                                       "LoginTimer.exe.new");
+            var oldPath = exePath + ".old";
+
+            ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;
+            using (var wc = new WebClient())
+            {
+                wc.Headers[HttpRequestHeader.UserAgent] = "LoginTimer/" + Program.Version;
+                wc.DownloadFile(info.ExeUrl, newPath);
+            }
+
+            if (info.Sha256 != null &&
+                !string.Equals(Sha256Of(newPath), info.Sha256,
+                               StringComparison.OrdinalIgnoreCase))
+            {
+                try { File.Delete(newPath); } catch { }
+                throw new InvalidOperationException(
+                    "Checksumme der heruntergeladenen Datei stimmt nicht.");
+            }
+
+            if (File.Exists(oldPath)) File.Delete(oldPath);
+            File.Move(exePath, oldPath);
+            try { File.Move(newPath, exePath); }
+            catch { File.Move(oldPath, exePath); throw; } // rollback
+        }
+
+        /// <summary>
+        /// Removes the .old EXE left behind by a previous self-update.
+        /// Retries in the background: right after an update the exiting old
+        /// instance may still hold the file lock for a moment.
+        /// </summary>
+        public static void CleanupOldExeAsync()
+        {
+            var oldPath = Application.ExecutablePath + ".old";
+            if (!File.Exists(oldPath)) return;
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                for (int i = 0; i < 10; i++)
+                {
+                    try { File.Delete(oldPath); return; }
+                    catch { Thread.Sleep(1000); }
+                }
+            });
+        }
+
+        static string Sha256Of(string path)
+        {
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+            using (var fs = File.OpenRead(path))
+            {
+                var hash = sha.ComputeHash(fs);
+                var sb = new StringBuilder(hash.Length * 2);
+                foreach (var b in hash) sb.Append(b.ToString("x2"));
+                return sb.ToString();
+            }
         }
     }
 
@@ -483,12 +573,21 @@ namespace LoginTimer
             Application.ThreadException += OnThreadException;
             AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
 
-            if (!_mutex.WaitOne(0, true))
+            // After a self-update the old instance is still shutting down —
+            // wait for the mutex instead of bailing out immediately.
+            bool afterUpdate =
+                Environment.GetCommandLineArgs().Contains("--updated");
+            bool gotMutex;
+            try { gotMutex = _mutex.WaitOne(afterUpdate ? 15000 : 0, true); }
+            catch (AbandonedMutexException) { gotMutex = true; } // holder died — mutex is ours
+
+            if (!gotMutex)
             {
                 MessageBox.Show("LoginTimer laeuft bereits in der Taskleiste.",
                     "LoginTimer", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
+            UpdateChecker.CleanupOldExeAsync();
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             try
@@ -602,6 +701,7 @@ namespace LoginTimer
         System.Threading.SynchronizationContext _syncCtx; // marshal back to UI thread
         bool        _exiting;     // guard against re-entrant OnExit calls
         ColorScheme _colors;
+        UpdateInfo  _pendingUpdate; // set by silent check; consumed by balloon click
 
         public TrayApp()
         {
@@ -851,39 +951,32 @@ namespace LoginTimer
         {
             var ctx = System.Threading.SynchronizationContext.Current;
             if (ctx == null) return;
-            UpdateChecker.CheckAsync(delegate(string result)
+            UpdateChecker.CheckAsync(delegate(UpdateInfo info)
             {
                 ctx.Post(delegate
                 {
                     if (_exiting) return;
-                    OnUpdateResult(result, interactive);
+                    OnUpdateResult(info, interactive);
                 }, null);
             });
         }
 
-        void OnUpdateResult(string result, bool interactive)
+        void OnUpdateResult(UpdateInfo info, bool interactive)
         {
-            if (!string.IsNullOrEmpty(result))
+            if (info != null && info.Version.Length > 0)
             {
                 if (interactive)
                 {
-                    var answer = MessageBox.Show(
-                        string.Format(
-                            "Version {0} ist verfuegbar (installiert: {1}).\n\n" +
-                            "Release-Seite jetzt oeffnen?",
-                            result, Program.Version),
-                        "LoginTimer - Update verfuegbar",
-                        MessageBoxButtons.YesNo, MessageBoxIcon.Information);
-                    if (answer == DialogResult.Yes)
-                        OpenReleasesPage();
+                    OfferUpdate(info);
                 }
                 else
                 {
+                    _pendingUpdate = info;
                     _tray.BalloonTipTitle = "LoginTimer - Update verfuegbar";
                     _tray.BalloonTipText  = string.Format(
                         "Version {0} ist verfuegbar (installiert: {1}). " +
-                        "Klicken oeffnet die Release-Seite.",
-                        result, Program.Version);
+                        "Klicken fuer Details.",
+                        info.Version, Program.Version);
                     _tray.BalloonTipIcon  = ToolTipIcon.Info;
                     _tray.ShowBalloonTip(10000);
                 }
@@ -892,7 +985,7 @@ namespace LoginTimer
 
             if (!interactive) return;
 
-            if (result == null)
+            if (info == null)
                 MessageBox.Show(
                     "Update-Pruefung fehlgeschlagen (keine Verbindung zu GitHub?).",
                     "LoginTimer", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -902,7 +995,75 @@ namespace LoginTimer
                     "LoginTimer", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
-        void OnBalloonClicked(object sender, EventArgs e) { OpenReleasesPage(); }
+        void OnBalloonClicked(object sender, EventArgs e)
+        {
+            var info = _pendingUpdate;
+            if (info != null) OfferUpdate(info);
+        }
+
+        void OfferUpdate(UpdateInfo info)
+        {
+            if (info.ExeUrl == null)
+            {
+                // Release ships no LoginTimer.exe asset → manual download only.
+                var a = MessageBox.Show(
+                    string.Format(
+                        "Version {0} ist verfuegbar (installiert: {1}).\n\n" +
+                        "Release-Seite jetzt oeffnen?",
+                        info.Version, Program.Version),
+                    "LoginTimer - Update verfuegbar",
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+                if (a == DialogResult.Yes) OpenReleasesPage();
+                return;
+            }
+
+            var answer = MessageBox.Show(
+                string.Format(
+                    "Version {0} ist verfuegbar (installiert: {1}).\n\n" +
+                    "Ja        = jetzt aktualisieren und neu starten\n" +
+                    "Nein      = Release-Seite im Browser oeffnen\n" +
+                    "Abbrechen = spaeter",
+                    info.Version, Program.Version),
+                "LoginTimer - Update verfuegbar",
+                MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+            if (answer == DialogResult.No)  { OpenReleasesPage(); return; }
+            if (answer != DialogResult.Yes) return;
+            StartSelfUpdate(info);
+        }
+
+        void StartSelfUpdate(UpdateInfo info)
+        {
+            var ctx = System.Threading.SynchronizationContext.Current;
+            if (ctx == null) return;
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                string error = null;
+                try { UpdateChecker.DownloadAndSwap(info); }
+                catch (Exception ex) { error = ex.Message; }
+                ctx.Post(delegate
+                {
+                    if (_exiting) return;
+                    if (error != null)
+                    {
+                        var a = MessageBox.Show(
+                            "Update fehlgeschlagen: " + error + "\n\n" +
+                            "Release-Seite fuer manuellen Download oeffnen?",
+                            "LoginTimer", MessageBoxButtons.YesNo,
+                            MessageBoxIcon.Warning);
+                        if (a == DialogResult.Yes) OpenReleasesPage();
+                        return;
+                    }
+                    // New EXE waits (--updated) until this instance has
+                    // exited and released the mutex; exit commits all data.
+                    try
+                    {
+                        Process.Start(Application.ExecutablePath, "--updated");
+                    }
+                    catch { }
+                    Application.Exit();
+                }, null);
+            });
+        }
 
         static void OpenReleasesPage()
         {
