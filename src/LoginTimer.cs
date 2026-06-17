@@ -928,10 +928,6 @@ namespace LoginTimer
         {
             var m = new ContextMenuStrip();
             m.Items.Add("Verlauf anzeigen", null, OnShowHistory);
-            var overlayItem = new ToolStripMenuItem("Zeitanzeige (Widget)");
-            overlayItem.Checked = true;
-            overlayItem.Click  += OnToggleOverlay;
-            m.Items.Add(overlayItem);
             m.Items.Add("Farben…", null, OnFarben);
             m.Items.Add(new ToolStripSeparator());
             var versionItem = new ToolStripMenuItem("Version " + Program.Version);
@@ -939,6 +935,10 @@ namespace LoginTimer
             m.Items.Add(versionItem);
             m.Items.Add("Auf Updates pruefen...", null, OnCheckUpdates);
             m.Items.Add(new ToolStripSeparator());
+            var overlayItem = new ToolStripMenuItem("Zeitanzeige (Widget)");
+            overlayItem.Checked = true;
+            overlayItem.Click  += OnToggleOverlay;
+            m.Items.Add(overlayItem);
             m.Items.Add("Beenden", null, OnQuit);
             return m;
         }
@@ -1089,7 +1089,12 @@ namespace LoginTimer
             }
         }
 
-        void OnQuit(object sender, EventArgs e) { Application.Exit(); }
+        void OnQuit(object sender, EventArgs e)
+        {
+            // Defer so the context-menu click handling finishes before we
+            // dispose the tray and its shared ContextMenuStrip in OnExit.
+            _tray.ContextMenuStrip.BeginInvoke(new Action(() => Application.Exit()));
+        }
 
         void OnFarben(object sender, EventArgs e)
         {
