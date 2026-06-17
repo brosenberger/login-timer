@@ -760,7 +760,8 @@ namespace LoginTimer
             _updateTimer.Tick += OnUpdateTimerTick;
             _updateTimer.Start();
 
-            SystemEvents.SessionSwitch += OnSessionSwitch;
+            SystemEvents.SessionSwitch  += OnSessionSwitch;
+            SystemEvents.SessionEnding  += OnSessionEnding;
             Application.ApplicationExit += OnExit;
         }
 
@@ -797,6 +798,11 @@ namespace LoginTimer
                         _appTracker.RecordTick(apps, tickSecs);
                 }, null);
             });
+        }
+
+        void OnSessionEnding(object sender, SessionEndingEventArgs e)
+        {
+            CommitSegment();
         }
 
         void OnSessionSwitch(object sender, SessionSwitchEventArgs e)
@@ -1130,7 +1136,8 @@ namespace LoginTimer
             _timer.Stop();
             _appTimer.Stop();
             _updateTimer.Stop();
-            SystemEvents.SessionSwitch -= OnSessionSwitch;
+            SystemEvents.SessionSwitch  -= OnSessionSwitch;
+            SystemEvents.SessionEnding  -= OnSessionEnding;
             _tray.Visible = false;
             _tray.Dispose();
             if (_overlay != null)
@@ -1330,12 +1337,17 @@ namespace LoginTimer
                 e.Cancel = true;
                 Hide();
             }
+            else if (e.CloseReason == CloseReason.WindowsShutDown)
+            {
+                // Windows shutdown/restart: data already committed via SessionEnding.
+                // Do NOT cancel — blocking WM_QUERYENDSESSION prevents restart/shutdown.
+                _topmostTimer.Stop();
+            }
             else
             {
-                // External close: installer (WixCloseApplications), Task Manager,
-                // Windows shutdown.  Cancel the individual form close and request
-                // a full Application.Exit() instead so TrayApp.OnExit() runs first
-                // and saves position + data before the process terminates.
+                // Installer (WixCloseApplications) or Task Manager: cancel the
+                // individual form close and request Application.Exit() so that
+                // TrayApp.OnExit() saves data before the process terminates.
                 e.Cancel = true;
                 _topmostTimer.Stop();
                 Application.Exit();
@@ -1367,9 +1379,14 @@ namespace LoginTimer
             if (_allowClose) { base.OnFormClosing(e); return; }
             if (e.CloseReason == CloseReason.UserClosing)
                 e.Cancel = true; // shouldn't happen, but guard it
+            else if (e.CloseReason == CloseReason.WindowsShutDown)
+            {
+                // Windows shutdown/restart: data already committed via SessionEnding.
+                // Do NOT cancel — blocking WM_QUERYENDSESSION prevents restart/shutdown.
+            }
             else
             {
-                // Installer / Task Manager / Windows shutdown → clean exit.
+                // Installer / Task Manager → clean exit.
                 e.Cancel = true;
                 Application.Exit();
             }
