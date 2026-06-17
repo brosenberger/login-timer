@@ -64,7 +64,7 @@
       <UIRef Id="WixUI_FeatureTree" />
       <!-- Fire LaunchApp when Finish is clicked and the checkbox is ticked -->
       <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApp">
-        WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed
+        WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1
       </Publish>
     </UI>
     <WixVariable Id="WixUILicenseRtf" Value="license.rtf" />
