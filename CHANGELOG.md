@@ -9,6 +9,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.2.1] — 2026-06-17
+
+### Fixed
+- **"Beenden" unreliable from context menu** — clicking Quit while the context menu was still open caused `OnExit` to dispose the tray and its shared `ContextMenuStrip` mid-click-handling, silently aborting the exit. `OnQuit` now defers `Application.Exit()` via `BeginInvoke` so the menu click finishes before disposal.
+- **Context menu layout** — "Zeitanzeige (Widget)" moved from the top group to just above "Beenden", grouping widget toggle and quit together.
+- **LoginTimer not launched after MSI install** — the `Publish` condition on the Finish-page checkbox included `and NOT Installed`, which evaluates at click time after the MSI has already set `Installed` to the product version, making the condition always false. Removed the redundant guard; the checkbox alone controls whether to launch. **Re-running the MSI (upgrade) will also apply this fix.**
+
+---
+
 ## [1.2.0] — 2026-06-17
 
 ### Added
