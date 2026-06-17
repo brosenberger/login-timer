@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+---
+
+## [1.2.0] — 2026-06-17
+
 ### Added
 - **Version info & update check** (#3)
   - Version is stamped into `LoginTimer.exe` (assembly attributes) from a single `Program.Version` constant and shown as a disabled "Version x.y.z" entry in the tray context menu
@@ -22,6 +26,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - Overlay and tray icon repaint immediately on OK; open History windows are closed and reopen with the new scheme on next access
 
 ### Fixed
+- **Restart/shutdown blocked by app** — `OverlayForm` and `AnchorForm` both responded to `WM_QUERYENDSESSION` (Windows restart/shutdown) with `e.Cancel = true`, telling the OS "do not shut down"; the computer could not restart while LoginTimer was running. Fixed by handling `CloseReason.WindowsShutDown` without canceling. A `SystemEvents.SessionEnding` handler now commits tracked time to disk before Windows begins closing processes, so no data is lost.
 - **ZIP step in `build-all.bat` crashed with `. was unexpected at this time.`** — the echo inside the failure branch of the `if` block contained a literal `)` in `(PowerShell 5+ erforderlich)`, which CMD parsed as the closing delimiter of the `if` block, leaving the trailing `.` as an unexpected token; escaped to `^(` / `^)`.  
   The `Compress-Archive` invocation was also rewritten to pass paths via environment variables (`$env:LT_F1` etc.) instead of embedding `%~dp0`-expanded paths directly in the `-Command` string, avoiding CMD quoting pitfalls.
 

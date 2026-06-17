@@ -10,7 +10,7 @@ A Windows system tray app written in **C# 5 / .NET Framework 4.x** (single sourc
 no project file, no NuGet). It tracks logged-in time per day, pauses on screen lock,
 shows a floating overlay widget, and records per-application active time per monitor.
 
-Current version: **1.1.1**
+Current version: **1.2.0**
 
 ---
 
