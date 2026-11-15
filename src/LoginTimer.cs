@@ -1707,9 +1707,11 @@ namespace LoginTimer
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            if (_allowClose)
+            // ApplicationExitCall: Application.Exit() asks every open form
+            // first and aborts the whole exit if one cancels. It is the clean
+            // shutdown path (OnExit saves), so it must never be cancelled.
+            if (_allowClose || e.CloseReason == CloseReason.ApplicationExitCall)
             {
-                // OnExit already ran — let the form close normally.
                 _topmostTimer.Stop();
                 base.OnFormClosing(e);
                 return;
@@ -1728,9 +1730,11 @@ namespace LoginTimer
             }
             else
             {
-                // Installer (WixCloseApplications) or Task Manager: cancel the
-                // individual form close and request Application.Exit() so that
-                // TrayApp.OnExit() saves data before the process terminates.
+                // WM_CLOSE from outside (installer, Task Manager): cancel this
+                // single form close and exit the whole app so TrayApp.OnExit()
+                // saves. Called directly, not via BeginInvoke: an installer may
+                // send WM_CLOSE to all top-level windows, including WinForms'
+                // hidden helper windows, and then a posted callback never runs.
                 e.Cancel = true;
                 _topmostTimer.Stop();
                 Application.Exit();
@@ -1750,16 +1754,37 @@ namespace LoginTimer
         public AnchorForm()
         {
             Text            = "LoginTimer";
-            ShowInTaskbar   = false;
+            ShowInTaskbar   = true;  // no hidden owner, see CreateParams
             FormBorderStyle = FormBorderStyle.None;
             Size            = new Size(1, 1);
             BackColor       = Color.Black;
             TransparencyKey = Color.Black; // fully transparent, click-through
         }
 
+        // ShowInTaskbar = false would make WinForms give the form a hidden
+        // owner window. Owned windows are not "main windows", so taskkill,
+        // Process.CloseMainWindow and the Restart Manager find nothing to send
+        // WM_CLOSE to. Instead: ShowInTaskbar = true (no owner) and keep it
+        // out of the taskbar/Alt+Tab via WS_EX_TOOLWINDOW without APPWINDOW.
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                var cp = base.CreateParams;
+                cp.ExStyle |= 0x00000080;  // WS_EX_TOOLWINDOW
+                cp.ExStyle &= ~0x00040000; // WS_EX_APPWINDOW
+                return cp;
+            }
+        }
+
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            if (_allowClose) { base.OnFormClosing(e); return; }
+            // ApplicationExitCall: see OverlayForm — never cancel the exit.
+            if (_allowClose || e.CloseReason == CloseReason.ApplicationExitCall)
+            {
+                base.OnFormClosing(e);
+                return;
+            }
             if (e.CloseReason == CloseReason.UserClosing)
                 e.Cancel = true; // shouldn't happen, but guard it
             else if (e.CloseReason == CloseReason.WindowsShutDown)
@@ -1769,7 +1794,7 @@ namespace LoginTimer
             }
             else
             {
-                // Installer / Task Manager → clean exit.
+                // Installer / Task Manager → clean exit (see OverlayForm).
                 e.Cancel = true;
                 Application.Exit();
             }

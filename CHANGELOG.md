@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **LoginTimer could not be closed cleanly** — `Application.Exit()` asks every open window first and aborts the exit if one refuses; the widget and the hidden anchor window refused (`ApplicationExitCall` went into their "external close" branch). As a result "Beenden", a close request from an installer / Task Manager and the restart after a self-update all did nothing. They now exit and save as intended.
+- **`taskkill`, Task Manager "End task" and the Restart Manager found no window to close** — the anchor window had a hidden WinForms owner, so it did not count as the process main window. It is now unowned (still hidden from taskbar and Alt+Tab).
+
 ---
 
 ## [1.3.0] — 2026-11-15

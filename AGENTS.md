@@ -108,7 +108,7 @@ All `@param` / `@return` in interface PHPDoc → not applicable (C# project).
 | `UpdateChecker` | Static. Queries GitHub `releases/latest` API on a ThreadPool thread, regex-parses `tag_name` + `LoginTimer.exe` asset URL/sha256 digest, compares against `Program.Version`. Forces TLS 1.2 (`SecurityProtocolType` 3072). Self-update: download next to EXE, verify digest (required — no digest or non-writable install folder → release page only), rename running EXE → `.old`, move new in place, relaunch with `--updated` (Main then waits up to 15 s for the mutex); `.old` cleanup retries on next start. |
 | `TrayApp` | `ApplicationContext`. Owns tray icon, 30 s timer, 10 s app timer, `OverlayForm`, `AnchorForm`. |
 | `OverlayForm` | Floating widget. `WS_EX_NOACTIVATE \| WS_EX_TOOLWINDOW`. `SetWindowPos(HWND_TOPMOST)` re-asserted every 1 s. Position saved on `LocationChanged`. |
-| `AnchorForm` | Hidden 1×1 window, `Text="LoginTimer"`, no `WS_EX_TOOLWINDOW`. Exists solely so Restart Manager and `util:CloseApplication` can identify the running process. |
+| `AnchorForm` | Transparent 1×1 window, `Text="LoginTimer"`. Must be an **unowned** visible window (= the process "main window"): `ShowInTaskbar = true` (WinForms gives `ShowInTaskbar = false` forms a hidden owner), kept out of taskbar/Alt+Tab via `WS_EX_TOOLWINDOW` minus `WS_EX_APPWINDOW`. Exists so `taskkill`, `Process.CloseMainWindow`, Restart Manager and `util:CloseApplication` can send it `WM_CLOSE`. |
 | `HistoryForm` | Statistics window. Four tabs: Tage / Wochen / Monate / Apps (range picker). Single instance: `TrayApp.ShowHistory` calls `Reload` on an open one. CSV export. |
 | `AppSettings` | `%AppData%\LoginTimer\settings.ini`: `IdleMinutes` (0 = off), `WeeklyTargetHours` (0 = off), `OverlayVisible`. |
 | `SettingsForm` | "Einstellungen…" dialog for the two numeric settings. |
@@ -121,7 +121,7 @@ All `@param` / `@return` in interface PHPDoc → not applicable (C# project).
 ### Clean shutdown
 - `TrayApp._exiting` bool guards against re-entrant `Application.Exit()` calls.
 - `OnExit` calls `AllowClose()` on both `_overlay` and `_anchor` before disposing, so `OnFormClosing` lets the close proceed rather than calling `Application.Exit()` again.
-- `AnchorForm.OnFormClosing`: external `WM_CLOSE` (from installer) → `Application.Exit()`. `_allowClose` set → let close.
+- `AnchorForm.OnFormClosing` / `OverlayForm.OnFormClosing`: external `WM_CLOSE` (`TaskManagerClosing`) → cancel this form close, call `Application.Exit()` **directly** (a `BeginInvoke` is lost when an installer also sends `WM_CLOSE` to WinForms' hidden helper windows). `ApplicationExitCall` and `_allowClose` → never cancel: `Application.Exit()` asks every open form first and aborts the whole exit if one cancels (this broke "Beenden", external close and the self-update restart up to 1.3.0).
 
 ---
 
