@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+---
+
+## [1.3.0] — 2026-11-15
+
 ### Added
 - **Einstellungen…** (tray menu) — new settings dialog, stored in `%AppData%\LoginTimer\settings.ini`.
 - **Idle pause (opt-in)** — after the configured minutes without mouse/keyboard input, login time and app time stop; the idle stretch is not counted, and the next input resumes counting from that input. Default 0 = off. Tray tooltip shows "(pausiert, inaktiv)".
