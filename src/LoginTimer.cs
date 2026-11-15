@@ -39,6 +39,9 @@ namespace LoginTimer
     [StructLayout(LayoutKind.Sequential)]
     struct RECT { public int Left, Top, Right, Bottom; }
 
+    [StructLayout(LayoutKind.Sequential)]
+    struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
+
     // ── Per-monitor active window detection ───────────────────────────────────
     static class WindowHelper
     {
@@ -63,10 +66,25 @@ namespace LoginTimer
         static extern IntPtr GetTopWindow(IntPtr hWnd);
         [DllImport("user32.dll")]
         static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+        [DllImport("user32.dll")]
+        static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+        [DllImport("user32.dll")]
+        static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+        [DllImport("dwmapi.dll")]
+        static extern int DwmGetWindowAttribute(IntPtr hWnd, int dwAttribute,
+                                                out int pvAttribute, int cbAttribute);
+        [DllImport("user32.dll")]
+        static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc lpEnumFunc,
+                                            IntPtr lParam);
 
         const uint MONITOR_DEFAULTTONULL = 0;
         const uint GW_HWNDNEXT           = 2;
         const int  SW_SHOWMINIMIZED      = 2;
+        const int  GWL_EXSTYLE           = -20;
+        const int  WS_EX_TOOLWINDOW      = 0x00000080;
+        const int  WS_EX_NOACTIVATE      = 0x08000000;
+        const int  DWMWA_CLOAKED         = 14;
+        const int  MinAppWindowSize      = 50; // px; smaller = helper/overlay window
 
         static readonly int _ownPid = Process.GetCurrentProcess().Id;
 
@@ -133,6 +151,9 @@ namespace LoginTimer
                 {"putty",           "PuTTY"},
                 {"filezilla",       "FileZilla"},
                 {"postman",         "Postman"},
+                {"calculatorapp",   "Rechner"},
+                {"olk",             "Outlook (neu)"},
+                {"whatsapp",        "WhatsApp"},
             };
 
         public static string GetFriendlyName(string processName)
@@ -171,7 +192,7 @@ namespace LoginTimer
                     var wp = new WINDOWPLACEMENT();
                     wp.length = Marshal.SizeOf(typeof(WINDOWPLACEMENT));
                     GetWindowPlacement(cur, ref wp);
-                    if (wp.showCmd != SW_SHOWMINIMIZED)
+                    if (wp.showCmd != SW_SHOWMINIMIZED && IsAppWindow(cur))
                         zOrder.Add(cur);
                 }
                 cur = GetWindow(cur, GW_HWNDNEXT);
@@ -206,6 +227,14 @@ namespace LoginTimer
                         pidCache[pid] = procName;
                     }
                     if (procName == null) continue;
+                    // Store apps (Rechner, Fotos, ...) run inside an
+                    // ApplicationFrameHost frame; the real app owns a child window.
+                    if (string.Equals(procName, "ApplicationFrameHost",
+                                      StringComparison.OrdinalIgnoreCase))
+                    {
+                        procName = GetHostedAppName(hwnd, pid);
+                        if (procName == null) continue; // suspended / not resolvable
+                    }
                     if (_systemProcs.Contains(procName)) continue;
 
                     result.Add(procName.ToLower());
@@ -213,6 +242,38 @@ namespace LoginTimer
                 }
             }
             return new List<string>(result);
+        }
+
+        // Filters windows that are "visible" but no app the user looks at:
+        // tool/overlay windows (e.g. a vendor OSD: 1x1, topmost, no-activate),
+        // and cloaked windows (other virtual desktops, suspended Store-app
+        // frames). Without this a topmost overlay wins every monitor.
+        static bool IsAppWindow(IntPtr hWnd)
+        {
+            int ex = GetWindowLong(hWnd, GWL_EXSTYLE);
+            if ((ex & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)) != 0) return false;
+
+            int cloaked;
+            if (DwmGetWindowAttribute(hWnd, DWMWA_CLOAKED, out cloaked, sizeof(int)) == 0 &&
+                cloaked != 0) return false;
+
+            RECT r;
+            if (!GetWindowRect(hWnd, out r)) return false;
+            return r.Right - r.Left >= MinAppWindowSize && r.Bottom - r.Top >= MinAppWindowSize;
+        }
+
+        static string GetHostedAppName(IntPtr frame, uint framePid)
+        {
+            string name = null;
+            EnumChildWindows(frame, delegate(IntPtr child, IntPtr lParam)
+            {
+                uint pid;
+                GetWindowThreadProcessId(child, out pid);
+                if (pid == 0 || pid == framePid) return true;
+                name = GetProcessNameSafe((int)pid);
+                return name == null; // stop at the first resolvable app
+            }, IntPtr.Zero);
+            return name;
         }
 
         static string GetProcessNameSafe(int pid)
@@ -336,6 +397,61 @@ namespace LoginTimer
         }
     }
 
+    // ── User settings (persisted to settings.ini) ────────────────────────────
+    class AppSettings
+    {
+        public int    IdleMinutes;       // pause after n minutes without input; 0 = off
+        public double WeeklyTargetHours; // weekly target for the Weeks tab; 0 = off
+        public bool   OverlayVisible;
+
+        static string _path = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "LoginTimer", "settings.ini");
+
+        public static AppSettings Load()
+        {
+            var s = new AppSettings { IdleMinutes = 0, WeeklyTargetHours = 40, OverlayVisible = true };
+            try
+            {
+                if (!File.Exists(_path)) return s;
+                foreach (var line in Storage.ReadAllLinesShared(_path))
+                {
+                    var idx = line.IndexOf('=');
+                    if (idx <= 0) continue;
+                    var key = line.Substring(0, idx).Trim();
+                    var val = line.Substring(idx + 1).Trim();
+                    int i;
+                    double d;
+                    if (key == "IdleMinutes" && int.TryParse(val, NumberStyles.Integer,
+                            CultureInfo.InvariantCulture, out i))
+                        s.IdleMinutes = Math.Max(0, i);
+                    else if (key == "WeeklyTargetHours" && double.TryParse(val, NumberStyles.Float,
+                            CultureInfo.InvariantCulture, out d))
+                        s.WeeklyTargetHours = Math.Max(0, d);
+                    else if (key == "OverlayVisible")
+                        s.OverlayVisible = val != "0";
+                }
+            }
+            catch (Exception ex) { Program.LogError("settings.ini konnte nicht gelesen werden:\n" + ex); }
+            return s;
+        }
+
+        public void Save()
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(_path));
+                Storage.WriteAllLinesAtomic(_path, new[]
+                {
+                    "IdleMinutes=" + IdleMinutes.ToString(CultureInfo.InvariantCulture),
+                    "WeeklyTargetHours=" + WeeklyTargetHours.ToString(CultureInfo.InvariantCulture),
+                    "OverlayVisible=" + (OverlayVisible ? "1" : "0"),
+                });
+            }
+            catch (Exception ex) { Program.LogError("settings.ini konnte nicht gespeichert werden:\n" + ex); }
+        }
+    }
+
     // ── Per-app time storage ──────────────────────────────────────────────────
     class AppTracker
     {
@@ -368,12 +484,21 @@ namespace LoginTimer
             }
         }
 
-        public Dictionary<string, double> GetDay(DateTime day)
+        // Summed seconds per process over the days from..to (inclusive).
+        public Dictionary<string, double> GetRange(DateTime from, DateTime to)
         {
-            Dictionary<string, double> d;
-            if (_data.TryGetValue(day.Date, out d))
-                return new Dictionary<string, double>(d, StringComparer.OrdinalIgnoreCase);
-            return new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+            var result = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+            foreach (var day in _data)
+            {
+                if (day.Key < from.Date || day.Key > to.Date) continue;
+                foreach (var app in day.Value)
+                {
+                    double cur;
+                    result.TryGetValue(app.Key, out cur);
+                    result[app.Key] = cur + app.Value;
+                }
+            }
+            return result;
         }
 
         // Throws on failure (caller retries). While apps.csv could not be read,
@@ -520,7 +645,7 @@ namespace LoginTimer
             // Never run an unverified download: no digest → manual update only.
             if (info.Sha256 == null)
                 throw new InvalidOperationException(
-                    "Das Release enthaelt keine Pruefsumme fuer LoginTimer.exe.");
+                    "Das Release enthält keine Prüfsumme für LoginTimer.exe.");
 
             var exePath = Application.ExecutablePath;
             var newPath = Path.Combine(Path.GetDirectoryName(exePath),
@@ -632,7 +757,7 @@ namespace LoginTimer
 
             if (!gotMutex)
             {
-                MessageBox.Show("LoginTimer laeuft bereits in der Taskleiste.",
+                MessageBox.Show("LoginTimer läuft bereits in der Taskleiste.",
                     "LoginTimer", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
@@ -799,12 +924,15 @@ namespace LoginTimer
         UpdateInfo  _pendingUpdate; // set by silent check; consumed by balloon click
         DateTime    _lastAlive;     // last timer tick — detects sleep/hibernate gaps
         bool        _saveFailing;   // log a save failure once, not every 30 s
+        AppSettings _settings;
+        bool        _idlePaused;    // segment stopped by idle detection (not by lock)
 
         static readonly TimeSpan MaxTickGap = TimeSpan.FromSeconds(60);
 
         public TrayApp()
         {
-            _colors = ColorScheme.Load();
+            _colors   = ColorScheme.Load();
+            _settings = AppSettings.Load();
 
             _dataPath = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -841,8 +969,8 @@ namespace LoginTimer
             {
                 _tray.BalloonTipTitle = "LoginTimer - Verlauf nicht lesbar";
                 _tray.BalloonTipText  =
-                    "Die Datendatei ist gesperrt oder beschaedigt (Details in error.log). " +
-                    "Die Zeit wird weiter gezaehlt und gespeichert, sobald die Datei lesbar ist.";
+                    "Die Datendatei ist gesperrt oder beschädigt (Details in error.log). " +
+                    "Die Zeit wird weiter gezählt und gespeichert, sobald die Datei lesbar ist.";
                 _tray.BalloonTipIcon  = ToolTipIcon.Warning;
                 _tray.ShowBalloonTip(10000);
             }
@@ -850,7 +978,7 @@ namespace LoginTimer
             _overlay = new OverlayForm(_colors);
             _overlay.ContextMenuStrip = _tray.ContextMenuStrip;
             _overlay.RequestHistory += delegate { ShowHistory(); };
-            _overlay.Show();
+            if (_settings.OverlayVisible) _overlay.Show();
             _overlay.SetTime(FormatHM(TodaySeconds())); // show correct time immediately
 
             _timer = new System.Windows.Forms.Timer();
@@ -886,7 +1014,8 @@ namespace LoginTimer
         void OnAppTick(object sender, EventArgs e)
         {
             Heartbeat();
-            if (_segStart == null) return; // locked / disconnected
+            CheckIdle(IdleSeconds());
+            if (_segStart == null) return; // locked / disconnected / idle
 
             // Lazy capture: Application.Run installs the WinForms sync context
             // only after the constructor returns, so we grab it here on the first tick.
@@ -925,12 +1054,14 @@ namespace LoginTimer
                 e.Reason == SessionSwitchReason.RemoteDisconnect)
             {
                 CommitSegment();
+                _idlePaused = false; // lock ends an idle pause; unlock restarts
             }
             else if (e.Reason == SessionSwitchReason.SessionUnlock ||
                      e.Reason == SessionSwitchReason.SessionLogon ||
                      e.Reason == SessionSwitchReason.RemoteConnect)
             {
                 Heartbeat();
+                _idlePaused = false;
                 if (_segStart == null)
                     _segStart = DateTime.Now;
             }
@@ -950,6 +1081,41 @@ namespace LoginTimer
                 _segStart = now;
             }
             _lastAlive = now;
+        }
+
+        [DllImport("user32.dll")]
+        static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
+
+        // Seconds since the last keyboard/mouse input in this session.
+        static double IdleSeconds()
+        {
+            var lii = new LASTINPUTINFO();
+            lii.cbSize = (uint)Marshal.SizeOf(typeof(LASTINPUTINFO));
+            if (!GetLastInputInfo(ref lii)) return 0;
+            uint ms = unchecked((uint)Environment.TickCount - lii.dwTime); // wraps after 49 days
+            return ms / 1000.0;
+        }
+
+        // Opt-in (settings: IdleMinutes > 0). After the threshold without
+        // input the segment is booked up to the last input and stopped; the
+        // next input restarts it at the moment of that input.
+        void CheckIdle(double idleSecs)
+        {
+            double threshold = _settings.IdleMinutes * 60.0;
+            if (threshold > 0 && _segStart != null && idleSecs >= threshold)
+            {
+                Accumulate(DateTime.Now.AddSeconds(-idleSecs));
+                _segStart   = null;
+                _idlePaused = true;
+                SaveAll();
+                UpdateIcon();
+            }
+            else if (_idlePaused && (threshold <= 0 || idleSecs < threshold))
+            {
+                _idlePaused = false;
+                _segStart   = DateTime.Now.AddSeconds(-Math.Min(idleSecs, MaxTickGap.TotalSeconds));
+                UpdateIcon();
+            }
         }
 
         // Books _segStart..end into the per-day totals (split at midnight)
@@ -996,7 +1162,7 @@ namespace LoginTimer
             try { _appTracker.Save(); } catch (Exception ex) { if (error == null) error = ex; }
             if (error == null) { _saveFailing = false; return; }
             if (!_saveFailing)
-                Program.LogError("Speichern fehlgeschlagen, wird beim naechsten Checkpoint erneut versucht:\n" + error);
+                Program.LogError("Speichern fehlgeschlagen, wird beim nächsten Checkpoint erneut versucht:\n" + error);
             _saveFailing = true;
         }
 
@@ -1014,7 +1180,8 @@ namespace LoginTimer
             Heartbeat(); // drop a sleep gap before showing the live total
             var secs  = TodaySeconds();
             var label = FormatHM(secs);
-            _tray.Text = "LoginTimer  " + label + " heute";
+            _tray.Text = "LoginTimer  " + label + " heute" +
+                         (_idlePaused ? " (pausiert, inaktiv)" : "");
 
             var oldIcon = _currentIcon;
             _currentIcon = MakeIcon(label);
@@ -1078,14 +1245,15 @@ namespace LoginTimer
             var m = new ContextMenuStrip();
             m.Items.Add("Verlauf anzeigen", null, OnShowHistory);
             m.Items.Add("Farben…", null, OnFarben);
+            m.Items.Add("Einstellungen…", null, OnSettings);
             m.Items.Add(new ToolStripSeparator());
             var versionItem = new ToolStripMenuItem("Version " + Program.Version);
             versionItem.Enabled = false;
             m.Items.Add(versionItem);
-            m.Items.Add("Auf Updates pruefen...", null, OnCheckUpdates);
+            m.Items.Add("Auf Updates prüfen...", null, OnCheckUpdates);
             m.Items.Add(new ToolStripSeparator());
             var overlayItem = new ToolStripMenuItem("Zeitanzeige (Widget)");
-            overlayItem.Checked = true;
+            overlayItem.Checked = _settings.OverlayVisible;
             overlayItem.Click  += OnToggleOverlay;
             m.Items.Add(overlayItem);
             m.Items.Add("Beenden", null, OnQuit);
@@ -1127,10 +1295,10 @@ namespace LoginTimer
                 else
                 {
                     _pendingUpdate = info;
-                    _tray.BalloonTipTitle = "LoginTimer - Update verfuegbar";
+                    _tray.BalloonTipTitle = "LoginTimer - Update verfügbar";
                     _tray.BalloonTipText  = string.Format(
-                        "Version {0} ist verfuegbar (installiert: {1}). " +
-                        "Klicken fuer Details.",
+                        "Version {0} ist verfügbar (installiert: {1}). " +
+                        "Klicken für Details.",
                         info.Version, Program.Version);
                     _tray.BalloonTipIcon  = ToolTipIcon.Info;
                     _tray.ShowBalloonTip(10000);
@@ -1142,7 +1310,7 @@ namespace LoginTimer
 
             if (info == null)
                 MessageBox.Show(
-                    "Update-Pruefung fehlgeschlagen (keine Verbindung zu GitHub?).",
+                    "Update-Prüfung fehlgeschlagen (keine Verbindung zu GitHub?).",
                     "LoginTimer", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             else
                 MessageBox.Show(
@@ -1164,10 +1332,10 @@ namespace LoginTimer
                 // → manual download only.
                 var a = MessageBox.Show(
                     string.Format(
-                        "Version {0} ist verfuegbar (installiert: {1}).\n\n" +
-                        "Release-Seite jetzt oeffnen?",
+                        "Version {0} ist verfügbar (installiert: {1}).\n\n" +
+                        "Release-Seite jetzt öffnen?",
                         info.Version, Program.Version),
-                    "LoginTimer - Update verfuegbar",
+                    "LoginTimer - Update verfügbar",
                     MessageBoxButtons.YesNo, MessageBoxIcon.Information);
                 if (a == DialogResult.Yes) OpenReleasesPage();
                 return;
@@ -1175,12 +1343,12 @@ namespace LoginTimer
 
             var answer = MessageBox.Show(
                 string.Format(
-                    "Version {0} ist verfuegbar (installiert: {1}).\n\n" +
+                    "Version {0} ist verfügbar (installiert: {1}).\n\n" +
                     "Ja        = jetzt aktualisieren und neu starten\n" +
-                    "Nein      = Release-Seite im Browser oeffnen\n" +
-                    "Abbrechen = spaeter",
+                    "Nein      = Release-Seite im Browser öffnen\n" +
+                    "Abbrechen = später",
                     info.Version, Program.Version),
-                "LoginTimer - Update verfuegbar",
+                "LoginTimer - Update verfügbar",
                 MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
             if (answer == DialogResult.No)  { OpenReleasesPage(); return; }
             if (answer != DialogResult.Yes) return;
@@ -1203,7 +1371,7 @@ namespace LoginTimer
                     {
                         var a = MessageBox.Show(
                             "Update fehlgeschlagen: " + error + "\n\n" +
-                            "Release-Seite fuer manuellen Download oeffnen?",
+                            "Release-Seite für manuellen Download öffnen?",
                             "LoginTimer", MessageBoxButtons.YesNo,
                             MessageBoxIcon.Warning);
                         if (a == DialogResult.Yes) OpenReleasesPage();
@@ -1231,6 +1399,8 @@ namespace LoginTimer
         void OnToggleOverlay(object sender, EventArgs e)
         {
             if (_overlay.Visible) _overlay.Hide(); else _overlay.Show();
+            _settings.OverlayVisible = _overlay.Visible;
+            _settings.Save();
             foreach (ToolStripItem item in _tray.ContextMenuStrip.Items)
             {
                 var mi = item as ToolStripMenuItem;
@@ -1257,13 +1427,27 @@ namespace LoginTimer
                 UpdateIcon();
                 _overlay.ApplyColors(_colors);
 
-                // Rebuild an open history window with the new colors.
-                // Snapshot first — Close() modifies the OpenForms collection.
-                var toClose = Application.OpenForms.Cast<Form>()
-                                         .OfType<HistoryForm>().ToList();
-                foreach (var hf in toClose) hf.Close();
-                if (toClose.Count > 0) ShowHistory();
+                // An open history window is rebuilt with the new colors.
+                if (OpenHistory() != null) ShowHistory();
             }
+        }
+
+        void OnSettings(object sender, EventArgs e)
+        {
+            using (var dlg = new SettingsForm(_settings))
+            {
+                if (dlg.ShowDialog() != DialogResult.OK) return;
+                _settings.IdleMinutes       = dlg.IdleMinutes;
+                _settings.WeeklyTargetHours = dlg.WeeklyTargetHours;
+                _settings.Save();
+                CheckIdle(IdleSeconds()); // turning idle detection off resumes a pause
+                if (OpenHistory() != null) ShowHistory();
+            }
+        }
+
+        static HistoryForm OpenHistory()
+        {
+            return Application.OpenForms.Cast<Form>().OfType<HistoryForm>().FirstOrDefault();
         }
 
         void ShowHistory()
@@ -1278,10 +1462,21 @@ namespace LoginTimer
                 snap[DateTime.Today] = _data.Get(DateTime.Today) + running;
             }
 
-            var appSnap = _appTracker.GetDay(DateTime.Today);
-            var hf = new HistoryForm(snap, appSnap, _colors);
+            // One history window: reload and raise an open one instead of
+            // stacking another copy.
+            var hf = OpenHistory();
+            if (hf != null)
+            {
+                hf.Reload(snap, _appTracker, _colors, _settings);
+                if (hf.WindowState == FormWindowState.Minimized)
+                    hf.WindowState = FormWindowState.Normal;
+                hf.Activate();
+                return;
+            }
+            hf = new HistoryForm(snap, _appTracker, _colors, _settings);
             hf.RequestColors += OnFarben;
             hf.Show();
+            hf.Activate();
         }
 
         void OnExit(object sender, EventArgs e)
@@ -1584,32 +1779,52 @@ namespace LoginTimer
     // ── History window ────────────────────────────────────────────────────────
     class HistoryForm : Form
     {
-        readonly Dictionary<DateTime, double> _snap;
-        readonly Dictionary<string, double>   _todayApps;
-        readonly ColorScheme                  _colors;
+        Dictionary<DateTime, double> _snap;
+        AppTracker                   _apps;
+        ColorScheme                  _colors;
+        AppSettings                  _settings;
         static readonly string[] DE_DAYS = { "Mo", "Di", "Mi", "Do", "Fr", "Sa", "So" };
 
         public event EventHandler RequestColors;
 
         public HistoryForm(Dictionary<DateTime, double> snap,
-                           Dictionary<string, double> todayApps,
-                           ColorScheme colors)
+                           AppTracker apps,
+                           ColorScheme colors,
+                           AppSettings settings)
         {
-            _snap      = snap;
-            _todayApps = todayApps;
-            _colors    = colors;
+            Text          = "LoginTimer - Verlauf";
+            Size          = new Size(760, 580);
+            MinimumSize   = new Size(560, 420);
+            StartPosition = FormStartPosition.CenterScreen;
+            Font          = new Font("Segoe UI", 9f);
+            Reload(snap, apps, colors, settings);
+        }
+
+        // Rebuilds all tabs with fresh data and colors; keeps window size,
+        // position and the selected tab.
+        public void Reload(Dictionary<DateTime, double> snap, AppTracker apps,
+                           ColorScheme colors, AppSettings settings)
+        {
+            _snap     = snap;
+            _apps     = apps;
+            _colors   = colors;
+            _settings = settings;
+
+            var oldTabs  = Controls.OfType<TabControl>().FirstOrDefault();
+            int selected = oldTabs != null ? oldTabs.SelectedIndex : 0;
+            foreach (var c in Controls.Cast<Control>().ToList()) c.Dispose();
+
+            SuspendLayout();
             BuildUI();
+            ResumeLayout();
+            var tabs = Controls.OfType<TabControl>().First();
+            if (selected > 0 && selected < tabs.TabCount) tabs.SelectedIndex = selected;
         }
 
         void BuildUI()
         {
-            Text        = "LoginTimer - Verlauf";
-            Size        = new Size(700, 580);
-            MinimumSize = new Size(540, 420);
-            TopMost     = true;
             BackColor   = _colors.HistoryBg;
             ForeColor   = _colors.FormText;
-            Font        = new Font("Segoe UI", 9f);
 
             var tabs = new TabControl();
             tabs.Dock = DockStyle.Fill;
@@ -1636,6 +1851,18 @@ namespace LoginTimer
             btnColors.ForeColor = _colors.FormText;
             btnColors.Click += (s, e) => { if (RequestColors != null) RequestColors(this, EventArgs.Empty); };
             btnPanel.Controls.Add(btnColors);
+
+            var btnExport = new Button();
+            btnExport.Text   = "Exportieren…";
+            btnExport.Height = 26;
+            btnExport.Width  = 110;
+            btnExport.Left   = 106;
+            btnExport.Top    = 6;
+            btnExport.FlatStyle = FlatStyle.Flat;
+            btnExport.BackColor = _colors.HeaderBg;
+            btnExport.ForeColor = _colors.FormText;
+            btnExport.Click += OnExport;
+            btnPanel.Controls.Add(btnExport);
 
             Controls.Add(btnPanel);
             tabs.BringToFront();
@@ -1750,15 +1977,22 @@ namespace LoginTimer
             var tp = new TabPage("  Wochen  ");
             tp.BackColor = _colors.HistoryBg;
 
-            var grid = MakeGrid(
-                new string[] { "Woche",  "Tage", "Gesamt", "O / Tag", "+/- Vorwoche" },
-                new int[]    { 130,       55,     110,       110,       100           });
+            double targetSecs = _settings.WeeklyTargetHours * 3600.0;
+            bool withTarget   = targetSecs > 0;
+            var headers = new List<string> { "Woche", "Tage", "Gesamt", "Ø / Tag" };
+            var widths  = new List<int>    { 120,     50,     95,       95        };
+            if (withTarget) { headers.Add("+/- Soll"); widths.Add(95); }
+            headers.Add("+/- Vorwoche"); widths.Add(100);
+            var grid = MakeGrid(headers.ToArray(), widths.ToArray());
+            int pctCol = headers.Count - 1;
 
             var groups = _snap
                 .GroupBy(kv => IsoWeekKey(kv.Key))
                 .OrderByDescending(g => g.Key)
                 .Take(16).ToList();
 
+            int currentWeek = IsoWeekKey(DateTime.Today);
+            double balance  = 0;
             for (int i = 0; i < groups.Count; i++)
             {
                 var g     = groups[i];
@@ -1776,14 +2010,47 @@ namespace LoginTimer
                         pct = (change >= 0 ? "+" : "") + ((int)Math.Round(change)).ToString() + "%";
                     }
                 }
-                int row = grid.Rows.Add(lbl, n, FormatHM(total), FormatHM(total / n), pct);
-                if (pct != "-")
+
+                var cells = new List<object> { lbl, n, FormatHM(total), FormatHM(total / n) };
+                double diff = 0;
+                if (withTarget)
+                {
+                    diff = total - WeekTarget(g.Key, currentWeek, DateTime.Today, targetSecs);
+                    balance += diff;
+                    cells.Add(FormatSigned(diff));
+                }
+                cells.Add(pct);
+                int row = grid.Rows.Add(cells.ToArray());
+                if (withTarget)
                     grid.Rows[row].Cells[4].Style.ForeColor =
+                        diff >= 0 ? _colors.AccentGreen : _colors.NegativeRed;
+                if (pct != "-")
+                    grid.Rows[row].Cells[pctCol].Style.ForeColor =
                         pct.StartsWith("+") ? _colors.AccentGreen : _colors.NegativeRed;
             }
 
             tp.Controls.Add(grid);
+            if (withTarget)
+                tp.Controls.Add(MakeBar(string.Format(
+                    "Saldo {0} Wochen:  {1}   (Soll {2} h)",
+                    groups.Count, FormatSigned(balance),
+                    _settings.WeeklyTargetHours.ToString("0.#", CultureInfo.GetCultureInfo("de-DE")))));
             return tp;
+        }
+
+        // Full target for finished weeks. The current week only counts the
+        // working days Mon–Fri up to and including today (Monday = 1/5).
+        internal static double WeekTarget(int weekKey, int currentWeekKey,
+                                          DateTime today, double targetSecs)
+        {
+            if (weekKey != currentWeekKey) return targetSecs;
+            int dayIndex = ((int)today.DayOfWeek + 6) % 7; // Mon = 0 … Sun = 6
+            return targetSecs * Math.Min(5, dayIndex + 1) / 5.0;
+        }
+
+        static string FormatSigned(double seconds)
+        {
+            return (seconds < 0 ? "-" : "+") + FormatHM(Math.Abs(seconds));
         }
 
         TabPage MonthsTab()
@@ -1792,7 +2059,7 @@ namespace LoginTimer
             tp.BackColor = _colors.HistoryBg;
 
             var grid = MakeGrid(
-                new string[] { "Monat",  "Tage", "Gesamt", "O / Tag", "O / Woche", "+/- Vormonat" },
+                new string[] { "Monat",  "Tage", "Gesamt", "Ø / Tag", "Ø / Woche", "+/- Vormonat" },
                 new int[]    { 130,       48,     100,       100,       100,          96            });
 
             var groups = _snap
@@ -1835,37 +2102,105 @@ namespace LoginTimer
             var tp = new TabPage("  Apps  ");
             tp.BackColor = _colors.HistoryBg;
 
-            var bar = MakeBar("Heute – Aktivzeit pro Anwendung");
-
-            if (_todayApps.Count == 0)
-            {
-                var noData = new Label();
-                noData.Text      = "Noch keine App-Daten fuer heute.\n" +
-                                   "Die Aufzeichnung laeuft im Hintergrund (alle 10 s).";
-                noData.Dock      = DockStyle.Fill;
-                noData.ForeColor = _colors.PlaceholderText;
-                noData.Font      = new Font("Segoe UI", 9.5f);
-                noData.TextAlign = ContentAlignment.MiddleCenter;
-                tp.Controls.Add(noData);
-                tp.Controls.Add(bar);
-                return tp;
-            }
+            var bar = MakeBar("Aktivzeit pro Anwendung");
+            bar.Padding = new Padding(0, 8, 10, 0);
+            var range = new ComboBox();
+            range.DropDownStyle = ComboBoxStyle.DropDownList;
+            range.FlatStyle     = FlatStyle.Flat;
+            range.BackColor     = _colors.HeaderBg;
+            range.ForeColor     = _colors.FormText;
+            range.Width         = 150;
+            range.Dock          = DockStyle.Right;
+            range.Items.AddRange(new object[]
+                { "Heute", "Gestern", "Letzte 7 Tage", "Letzte 30 Tage", "Gesamt" });
+            bar.Controls.Add(range);
 
             var grid = MakeGrid(
-                new string[] { "Anwendung", "Zeit",  "Stunden" },
-                new int[]    { 240,          120,     110      });
+                new string[] { "Anwendung", "Zeit", "Stunden", "Anteil" },
+                new int[]    { 240,          110,    100,       80       });
 
-            foreach (var kv in _todayApps.OrderByDescending(a => a.Value))
-            {
-                grid.Rows.Add(
-                    WindowHelper.GetFriendlyName(kv.Key),
-                    FormatHM(kv.Value),
-                    (kv.Value / 3600.0).ToString("F2", CultureInfo.InvariantCulture));
-            }
+            var noData = new Label();
+            noData.Text      = "Keine App-Daten im gewählten Zeitraum.\n" +
+                               "Die Aufzeichnung läuft im Hintergrund (alle 10 s).";
+            noData.Dock      = DockStyle.Fill;
+            noData.ForeColor = _colors.PlaceholderText;
+            noData.Font      = new Font("Segoe UI", 9.5f);
+            noData.TextAlign = ContentAlignment.MiddleCenter;
+
+            range.SelectedIndexChanged += delegate { FillApps(grid, noData, range.SelectedIndex); };
 
             tp.Controls.Add(grid);
+            tp.Controls.Add(noData);
             tp.Controls.Add(bar);
+            range.SelectedIndex = 0; // fills the grid
             return tp;
+        }
+
+        void FillApps(DataGridView grid, Label noData, int rangeIndex)
+        {
+            var today = DateTime.Today;
+            DateTime from = today, to = today;
+            switch (rangeIndex)
+            {
+                case 1: from = to = today.AddDays(-1); break;
+                case 2: from = today.AddDays(-6);      break;
+                case 3: from = today.AddDays(-29);     break;
+                case 4: from = DateTime.MinValue;      break;
+            }
+
+            // Several process names can share one display name (teams / ms-teams).
+            var byName = _apps.GetRange(from, to)
+                .GroupBy(kv => WindowHelper.GetFriendlyName(kv.Key))
+                .Select(g => new KeyValuePair<string, double>(g.Key, g.Sum(kv => kv.Value)))
+                .OrderByDescending(kv => kv.Value)
+                .ToList();
+            double sum = byName.Sum(kv => kv.Value);
+
+            grid.Rows.Clear();
+            foreach (var kv in byName)
+                grid.Rows.Add(
+                    kv.Key,
+                    FormatHM(kv.Value),
+                    (kv.Value / 3600.0).ToString("F2", CultureInfo.InvariantCulture),
+                    sum > 0 ? (kv.Value / sum * 100.0).ToString("0") + " %" : "-");
+            grid.Visible   = byName.Count > 0;
+            noData.Visible = byName.Count == 0;
+        }
+
+        void OnExport(object sender, EventArgs e)
+        {
+            using (var dlg = new SaveFileDialog())
+            {
+                dlg.Filter   = "CSV-Datei (*.csv)|*.csv";
+                dlg.FileName = "LoginTimer-" + DateTime.Today.ToString("yyyy-MM-dd") + ".csv";
+                if (dlg.ShowDialog(this) != DialogResult.OK) return;
+                try
+                {
+                    File.WriteAllText(dlg.FileName, BuildCsv(_snap), new UTF8Encoding(true));
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, "Export fehlgeschlagen: " + ex.Message, "LoginTimer",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            }
+        }
+
+        // One row per day, oldest first. Semicolons and decimal comma so the
+        // file opens directly in a German Excel; UTF-8 BOM for the umlauts.
+        internal static string BuildCsv(Dictionary<DateTime, double> snap)
+        {
+            var de = CultureInfo.GetCultureInfo("de-DE");
+            var sb = new StringBuilder("Datum;Wochentag;Dauer;Stunden\r\n");
+            foreach (var kv in snap.OrderBy(k => k.Key))
+            {
+                int dow = (int)kv.Key.DayOfWeek;
+                sb.Append(kv.Key.ToString("dd.MM.yyyy", CultureInfo.InvariantCulture)).Append(';')
+                  .Append(DE_DAYS[dow == 0 ? 6 : dow - 1]).Append(';')
+                  .Append(FormatHM(kv.Value)).Append(';')
+                  .Append((kv.Value / 3600.0).ToString("F2", de)).Append("\r\n");
+            }
+            return sb.ToString();
         }
 
         // ISO 8601 week as yyyyww. Calendar.GetWeekOfYear is not ISO-conform
@@ -1884,6 +2219,98 @@ namespace LoginTimer
             int h = (int)seconds / 3600;
             int m = ((int)seconds % 3600) / 60;
             return string.Format("{0:D2}:{1:D2}", h, m);
+        }
+    }
+
+    // ── Settings dialog ───────────────────────────────────────────────────────
+    class SettingsForm : Form
+    {
+        readonly NumericUpDown _idle;
+        readonly NumericUpDown _target;
+
+        public int    IdleMinutes       { get { return (int)_idle.Value; } }
+        public double WeeklyTargetHours { get { return (double)_target.Value; } }
+
+        public SettingsForm(AppSettings s)
+        {
+            Text            = "Einstellungen";
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox     = false;
+            MinimizeBox     = false;
+            ShowInTaskbar   = false;
+            TopMost         = true;
+            StartPosition   = FormStartPosition.CenterScreen;
+            ClientSize      = new Size(440, 216);
+            Font            = new Font("Segoe UI", 9f);
+            BackColor       = Color.FromArgb(32, 32, 32);
+            ForeColor       = Color.FromArgb(200, 200, 200);
+
+            _idle = AddRow(16, "Pause bei Inaktivität nach (Minuten):",
+                "0 = aus. Ohne Maus- oder Tastatureingabe wird die Zeit angehalten\n" +
+                "(auch beim Lesen oder Video schauen).",
+                MakeNumber(0, 240, 0, s.IdleMinutes));
+            _target = AddRow(100, "Wochen-Soll (Stunden):",
+                "0 = aus. Zeigt \"+/- Soll\" und den Saldo im Tab \"Wochen\".",
+                MakeNumber(0, 80, 1, (decimal)s.WeeklyTargetHours));
+
+            var btnOk = MakeButton("OK", ClientSize.Width - 176, Color.FromArgb(55, 100, 70));
+            btnOk.ForeColor    = Color.White;
+            btnOk.DialogResult = DialogResult.OK;
+            AcceptButton       = btnOk;
+            var btnCancel = MakeButton("Abbrechen", ClientSize.Width - 94, Color.FromArgb(55, 55, 55));
+            btnCancel.DialogResult = DialogResult.Cancel;
+            CancelButton           = btnCancel;
+            Controls.Add(btnOk);
+            Controls.Add(btnCancel);
+        }
+
+        static NumericUpDown MakeNumber(decimal min, decimal max, int decimals, decimal value)
+        {
+            var num = new NumericUpDown();
+            num.Minimum       = min;
+            num.Maximum       = max;
+            num.DecimalPlaces = decimals;
+            num.Increment     = decimals > 0 ? 0.5m : 1m;
+            num.Value         = Math.Min(max, Math.Max(min, value));
+            num.Width         = 80;
+            num.TextAlign     = HorizontalAlignment.Right;
+            num.BackColor     = Color.FromArgb(55, 55, 55);
+            num.ForeColor     = Color.FromArgb(220, 220, 220);
+            return num;
+        }
+
+        NumericUpDown AddRow(int top, string label, string hint, NumericUpDown num)
+        {
+            var lbl = new Label();
+            lbl.Text     = label;
+            lbl.Location = new Point(12, top + 3);
+            lbl.AutoSize = true;
+            Controls.Add(lbl);
+
+            num.Location = new Point(ClientSize.Width - 92, top);
+            Controls.Add(num);
+
+            var h = new Label();
+            h.Text      = hint;
+            h.Location  = new Point(12, top + 30);
+            h.AutoSize  = true;
+            h.ForeColor = Color.FromArgb(140, 140, 140);
+            Controls.Add(h);
+            return num;
+        }
+
+        Button MakeButton(string text, int left, Color back)
+        {
+            var b = new Button();
+            b.Text      = text;
+            b.Width     = 82;
+            b.Height    = 28;
+            b.Left      = left;
+            b.Top       = ClientSize.Height - 40;
+            b.FlatStyle = FlatStyle.Flat;
+            b.BackColor = back;
+            b.ForeColor = Color.FromArgb(200, 200, 200);
+            return b;
         }
     }
 

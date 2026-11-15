@@ -102,14 +102,16 @@ All `@param` / `@return` in interface PHPDoc → not applicable (C# project).
 | Class | Role |
 |---|---|
 | `Program` | Entry point, named mutex (single instance), unhandled-exception logger |
-| `WindowHelper` | Static. Z-order walk via `GetTopWindow`/`GetWindow`; returns topmost visible non-minimised non-system window per monitor. PID cached per tick. |
+| `WindowHelper` | Static. Z-order walk via `GetTopWindow`/`GetWindow`; returns topmost visible non-minimised non-system window per monitor. `IsAppWindow` skips tool/no-activate, cloaked and < 50 px windows (vendor OSD overlays won every tick before). `ApplicationFrameHost` frames resolve to the hosted Store app. PID cached per tick. |
 | `AppTracker` | In-memory `Dictionary<DateTime, Dictionary<string, double>>`. `RecordTick()`, `Save()`, `Load()`. CSV: `%AppData%\LoginTimer\apps.csv` |
 | `DayData` | Login-time storage. CSV: `%AppData%\LoginTimer\data.csv` (`yyyy-MM-dd,seconds`) |
 | `UpdateChecker` | Static. Queries GitHub `releases/latest` API on a ThreadPool thread, regex-parses `tag_name` + `LoginTimer.exe` asset URL/sha256 digest, compares against `Program.Version`. Forces TLS 1.2 (`SecurityProtocolType` 3072). Self-update: download next to EXE, verify digest (required — no digest or non-writable install folder → release page only), rename running EXE → `.old`, move new in place, relaunch with `--updated` (Main then waits up to 15 s for the mutex); `.old` cleanup retries on next start. |
 | `TrayApp` | `ApplicationContext`. Owns tray icon, 30 s timer, 10 s app timer, `OverlayForm`, `AnchorForm`. |
 | `OverlayForm` | Floating widget. `WS_EX_NOACTIVATE \| WS_EX_TOOLWINDOW`. `SetWindowPos(HWND_TOPMOST)` re-asserted every 1 s. Position saved on `LocationChanged`. |
 | `AnchorForm` | Hidden 1×1 window, `Text="LoginTimer"`, no `WS_EX_TOOLWINDOW`. Exists solely so Restart Manager and `util:CloseApplication` can identify the running process. |
-| `HistoryForm` | Statistics window. Four tabs: Tage / Wochen / Monate / Apps. `TopMost = true`. |
+| `HistoryForm` | Statistics window. Four tabs: Tage / Wochen / Monate / Apps (range picker). Single instance: `TrayApp.ShowHistory` calls `Reload` on an open one. CSV export. |
+| `AppSettings` | `%AppData%\LoginTimer\settings.ini`: `IdleMinutes` (0 = off), `WeeklyTargetHours` (0 = off), `OverlayVisible`. |
+| `SettingsForm` | "Einstellungen…" dialog for the two numeric settings. |
 
 ### Threading
 - `OnAppTick` dispatches `WindowHelper.GetActiveAppsPerMonitor()` to a `ThreadPool` thread.
@@ -130,6 +132,8 @@ All `@param` / `@return` in interface PHPDoc → not applicable (C# project).
 | `%AppData%\LoginTimer\data.csv` | `yyyy-MM-dd,seconds` |
 | `%AppData%\LoginTimer\apps.csv` | `yyyy-MM-dd,processname,seconds` |
 | `%AppData%\LoginTimer\overlay.pos` | `x,y` |
+| `%AppData%\LoginTimer\settings.ini` | `key=value` (see `AppSettings`) |
+| `%AppData%\LoginTimer\colors.ini` | `Name=r,g,b` |
 | `%AppData%\LoginTimer\error.log` | Appended on unhandled exceptions and failed loads/saves |
 | `%AppData%\LoginTimer\*.csv.bak` | Previous version of each CSV (written via `Storage.WriteAllLinesAtomic`) |
 
@@ -184,6 +188,8 @@ Also update the version line in `README.md` (`**Version x.y.z**`).
 
 - **Single source file** — keep everything in `src/LoginTimer.cs`. Split only if it exceeds ~1 500 lines.
 - **`_iconBitmap` field** — the `Bitmap` backing the tray icon must be kept alive as a field. Disposing it invalidates the GDI handle and silently blanks the tray icon. The `HICON` from `GetHicon()` is not owned by the `Icon` wrapper: free it with `DestroyOwnedIcon` (`DestroyIcon`), or every redraw leaks GDI handles.
+- **Idle pause** — `TrayApp.CheckIdle` (called from the 10 s app tick after `Heartbeat`) stops the segment at the last input and sets `_idlePaused`; input or lock/unlock resumes. Off when `IdleMinutes` = 0.
+- **DPI** — the app is not DPI-aware (bitmap-stretched on scaled displays). All forms use fixed pixel layouts; making it DPI-aware needs per-form autoscale work verified on a 125–150 % display.
 - **Sleep detection** — `TrayApp.Heartbeat()` treats a gap > `MaxTickGap` (60 s) since the last timer tick as sleep/hibernate. Call it before booking time (`Checkpoint`, `CommitSegment` and the display paths already do).
 - **Saving** — `DayData.Save` / `AppTracker.Save` throw; `TrayApp.SaveAll()` catches, logs once and retries on the next checkpoint. While a CSV could not be loaded, `Save` retries the load first and never overwrites the file blind.
 - **`WS_EX_NOACTIVATE`** on `OverlayForm` prevents focus steal but also means the widget cannot receive keyboard input — intentional.

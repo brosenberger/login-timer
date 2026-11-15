@@ -123,7 +123,7 @@ namespace LoginTimerInstaller
             {
                 _btnInstall.Enabled = false;
                 _chkDesk.Enabled = false;
-                SetStatus("LoginTimer.exe nicht gefunden!\nBitte zuerst build.bat ausfuehren.", Color.FromArgb(220, 80, 60));
+                SetStatus("LoginTimer.exe nicht gefunden!\nBitte zuerst build.bat ausführen.", Color.FromArgb(220, 80, 60));
             }
         }
 
@@ -161,7 +161,7 @@ namespace LoginTimerInstaller
             bool admin = IsAdmin();
 
             _rbUser = new RadioButton();
-            _rbUser.Text = "Nur fuer mich  (%LocalAppData%\\LoginTimer\\)";
+            _rbUser.Text = "Nur für mich  (%LocalAppData%\\LoginTimer\\)";
             _rbUser.Location = new Point(pad + 10, y);
             _rbUser.Width = 370;
             _rbUser.Checked = true;
@@ -170,7 +170,7 @@ namespace LoginTimerInstaller
             y += 26;
 
             _rbSystem = new RadioButton();
-            _rbSystem.Text = "Fuer alle Benutzer  (C:\\Program Files\\LoginTimer\\)";
+            _rbSystem.Text = "Für alle Benutzer  (C:\\Program Files\\LoginTimer\\)";
             _rbSystem.Location = new Point(pad + 10, y);
             _rbSystem.Width = 370;
             _rbSystem.Enabled = admin;
@@ -183,7 +183,7 @@ namespace LoginTimerInstaller
             if (!admin)
             {
                 var lblNoAdmin = new Label();
-                lblNoAdmin.Text = "  (Administrator-Rechte benoetigt — als Admin neu starten fuer diese Option)";
+                lblNoAdmin.Text = "  (Administrator-Rechte benötigt — als Admin neu starten für diese Option)";
                 lblNoAdmin.Location = new Point(pad + 10, y + 18);
                 lblNoAdmin.Width = 380;
                 lblNoAdmin.ForeColor = Color.FromArgb(140, 140, 140);
@@ -203,7 +203,7 @@ namespace LoginTimerInstaller
 
             // Optionen
             _chkDesk = new CheckBox();
-            _chkDesk.Text = "Desktop-Verknuepfung erstellen";
+            _chkDesk.Text = "Desktop-Verknüpfung erstellen";
             _chkDesk.Location = new Point(pad, y);
             _chkDesk.Width = 300;
             _chkDesk.Checked = true;
@@ -300,8 +300,8 @@ namespace LoginTimerInstaller
                 MessageBox.Show(
                     "LoginTimer wurde erfolgreich installiert!\n\n" +
                     "Installiert in:\n  " + destDir + "\n\n" +
-                    "Autostart-Verknuepfung:\n  " + lnkAutostart + "\n\n" +
-                    "LoginTimer laeuft jetzt im Hintergrund.",
+                    "Autostart-Verknüpfung:\n  " + lnkAutostart + "\n\n" +
+                    "LoginTimer läuft jetzt im Hintergrund.",
                     "Installation abgeschlossen",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Information);

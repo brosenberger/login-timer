@@ -7,7 +7,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **Einstellungen…** (tray menu) — new settings dialog, stored in `%AppData%\LoginTimer\settings.ini`.
+- **Idle pause (opt-in)** — after the configured minutes without mouse/keyboard input, login time and app time stop; the idle stretch is not counted, and the next input resumes counting from that input. Default 0 = off. Tray tooltip shows "(pausiert, inaktiv)".
+- **Weekly target** — Weeks tab shows "+/- Soll" per week and a balance over the shown weeks; default 40 h, 0 hides it. The current week counts Mon–Fri up to and including today.
+- **Apps tab history** — range picker (Heute / Gestern / Letzte 7 Tage / Letzte 30 Tage / Gesamt) and a share column; process names with the same display name (teams / ms-teams) are merged.
+- **CSV export** — "Exportieren…" in the history window (semicolon, decimal comma, UTF-8 BOM — opens directly in a German Excel).
+- **Store apps** (e.g. Rechner) are now tracked under their own name instead of being skipped as `ApplicationFrameHost`.
+
+### Changed
+- History window: reopening refreshes the open window instead of stacking a new copy; it is no longer always on top.
+- Widget on/off is remembered across restarts.
+- UI texts use real umlauts ("prüfen", "verfügbar", …) instead of ae/oe/ue.
+
 ### Fixed
+- **Per-app time attributed to overlay windows** — the per-monitor scan took the first "visible" window in z-order, so an invisible topmost overlay (e.g. a vendor on-screen display, 1×1 px) won every tick, and windows on other virtual desktops counted too. Tool/no-activate windows, cloaked windows and windows smaller than 50 px are now skipped. Existing `apps.csv` entries are not changed.
 - **Tray icon broke after ~1 day of uptime** — every icon redraw (every 30 s, also while locked) leaked the `HICON` from `Bitmap.GetHicon()` (3 GDI objects); `Icon.Dispose()` does not free it. After ~28 h the per-process GDI limit was reached and every tick raised an error dialog. The old handle is now freed with `DestroyIcon`.
 - **Time counted twice while `data.csv` was locked** — if the file was open in Excel or locked by a sync client, the failed save skipped the segment reset, so each 30 s checkpoint booked the same interval again and raised an error dialog. Time is now booked in memory first; a failed save is logged once to `error.log` and retried on the next checkpoint.
 - **App did not start while `data.csv` was open in Excel** — the CSVs are now read with shared access. If a file is still unreadable, LoginTimer starts anyway, shows a warning balloon, does not overwrite the stored history, and merges the tracked time in once the file can be read again.

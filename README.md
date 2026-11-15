@@ -23,7 +23,7 @@ Last 60 days with date, weekday, duration, decimal hours, and % change vs. the p
 ### History — Weeks
 ![History Weeks](docs/screenshots/history-weeks.png)
 
-Last 16 weeks grouped by calendar week — total time, number of active days, average per day, and % change vs. previous week.
+Last 16 weeks grouped by ISO calendar week — total time, number of active days, average per day, difference to the weekly target with a running balance, and % change vs. previous week.
 
 ### History — Months
 ![History Months](docs/screenshots/history-months.png)
@@ -37,11 +37,14 @@ Last 12 months — total, days tracked, average per day, average per week, and %
 - **Auto-tracking** — starts on login, pauses on Windows lock / remote disconnect, resumes on unlock
 - **Floating widget** — always-on-top HH:MM display, draggable, position persisted across restarts
 - **Tray icon** — live time rendered directly into the icon; right-click menu to toggle widget or quit
-- **History window** — days / weeks / months / apps tabs with averages and ±% change indicators
-- **Per-app tracking** — every 10 s the topmost visible window per monitor is recorded; works correctly with video on a second monitor while working on the first
+- **History window** — days / weeks / months / apps tabs with averages and ±% change indicators; one window that refreshes when reopened
+- **Weekly target** — "+/- Soll" per week and a balance in the Weeks tab (default 40 h, set under *Einstellungen…*, 0 = off)
+- **Idle pause (opt-in)** — after *n* minutes without mouse/keyboard input the time stops, and the idle stretch is not counted (*Einstellungen…*, default off)
+- **Per-app tracking** — every 10 s the topmost app window per monitor is recorded (overlay/tool windows and other virtual desktops ignored, Store apps such as Rechner recognised); Apps tab for today, yesterday, 7 / 30 days or everything; works correctly with video on a second monitor while working on the first
+- **CSV export** — "Exportieren…" in the history window writes all days as an Excel-ready CSV (semicolon, decimal comma)
 - **Double-click** widget or tray icon to open history
 - **Plain CSV data store** — `%AppData%\LoginTimer\data.csv` and `apps.csv` (easy to inspect or back up)
-- **Update check & self-update** — version shown in the tray menu; checks GitHub releases on startup (balloon notification) and on demand via "Auf Updates pruefen...". One click downloads the new `LoginTimer.exe` (sha256-verified), swaps it in place and restarts — no installer needed
+- **Update check & self-update** — version shown in the tray menu; checks GitHub releases on startup (balloon notification) and on demand via "Auf Updates prüfen...". One click downloads the new `LoginTimer.exe` (sha256-verified), swaps it in place and restarts — no installer needed
 - **No admin rights required** — MSI installs per-user; portable EXE needs no installer at all; uses only the .NET Framework built into Windows 10/11
 
 ---
@@ -62,7 +65,7 @@ Download `LoginTimer.msi` from the [latest release](../../releases/latest), doub
 
 - Installs to `%LocalAppData%\LoginTimer\`
 - Creates an autostart shortcut (runs on every login)
-- Optional desktop shortcut (off by default in the wizard)
+- Optional desktop shortcut (on by default, can be deselected in the wizard)
 - Registers in *Programs and Features* for clean uninstall
 
 ### Option B — Portable
