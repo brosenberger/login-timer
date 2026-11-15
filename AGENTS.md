@@ -182,7 +182,9 @@ Also update the version line in `README.md` (`**Version x.y.z**`).
 ## Known constraints and gotchas
 
 - **Single source file** — keep everything in `src/LoginTimer.cs`. Split only if it exceeds ~1 500 lines.
-- **`_iconBitmap` field** — the `Bitmap` backing the tray icon must be kept alive as a field. Disposing it invalidates the GDI handle and silently blanks the tray icon.
+- **`_iconBitmap` field** — the `Bitmap` backing the tray icon must be kept alive as a field. Disposing it invalidates the GDI handle and silently blanks the tray icon. The `HICON` from `GetHicon()` is not owned by the `Icon` wrapper: free it with `DestroyOwnedIcon` (`DestroyIcon`), or every redraw leaks GDI handles.
+- **Sleep detection** — `TrayApp.Heartbeat()` treats a gap > `MaxTickGap` (60 s) since the last timer tick as sleep/hibernate. Call it before booking time (`Checkpoint`, `CommitSegment` and the display paths already do).
+- **Saving** — `DayData.Save` / `AppTracker.Save` throw; `TrayApp.SaveAll()` catches, logs once and retries on the next checkpoint. While a CSV could not be loaded, `Save` retries the load first and never overwrites the file blind.
 - **`WS_EX_NOACTIVATE`** on `OverlayForm` prevents focus steal but also means the widget cannot receive keyboard input — intentional.
 - **`build_msi.bat` uses `pushd`** — candle/light are run from `installer\` so relative paths in the WXS (`Source="..\dist\LoginTimer.exe"`, `license.rtf`) resolve correctly. The `.wixpdb` is emitted next to the MSI output (`dist\`) not next to the WXS, so cleanup must target `"..\dist\LoginTimer.wixpdb"`.
 - **`NOPAUSE` env var** — set to `1` by `build-all.bat` before calling sub-scripts. Sub-scripts guard all `pause` calls with `if not defined NOPAUSE`.

@@ -343,7 +343,17 @@ namespace LoginTimer
         // date → processName → accumulated seconds
         Dictionary<DateTime, Dictionary<string, double>> _data;
 
-        public AppTracker(string path) { _path = path; Load(); }
+        bool _loaded; // false → apps.csv unreadable; Save() must not overwrite it
+
+        public bool Loaded { get { return _loaded; } }
+
+        public AppTracker(string path)
+        {
+            _path = path;
+            _data = new Dictionary<DateTime, Dictionary<string, double>>();
+            try { Load(); }
+            catch (Exception ex) { Program.LogError("apps.csv konnte nicht gelesen werden:\n" + ex); }
+        }
 
         public void RecordTick(IEnumerable<string> processNames, double seconds)
         {
@@ -366,28 +376,29 @@ namespace LoginTimer
             return new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
         }
 
+        // Throws on failure (caller retries). While apps.csv could not be read,
+        // retries the load first: writing now would wipe the stored history.
         public void Save()
         {
-            try
-            {
-                var dir = Path.GetDirectoryName(_path);
-                if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-                var lines = new List<string>();
-                foreach (var day in _data.OrderBy(kv => kv.Key))
-                    foreach (var app in day.Value.OrderByDescending(kv => kv.Value))
-                        lines.Add(day.Key.ToString("yyyy-MM-dd") + "," +
-                                   app.Key + "," +
-                                   app.Value.ToString(CultureInfo.InvariantCulture));
-                File.WriteAllLines(_path, lines.ToArray());
-            }
-            catch { }
+            if (!_loaded) Load();
+            var dir = Path.GetDirectoryName(_path);
+            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+            var lines = new List<string>();
+            foreach (var day in _data.OrderBy(kv => kv.Key))
+                foreach (var app in day.Value.OrderByDescending(kv => kv.Value))
+                    lines.Add(day.Key.ToString("yyyy-MM-dd") + "," +
+                               app.Key + "," +
+                               app.Value.ToString(CultureInfo.InvariantCulture));
+            File.WriteAllLines(_path, lines.ToArray());
         }
 
+        // Adds the file's totals to what is already in memory (empty at
+        // startup; the time tracked so far when a failed load is retried).
         void Load()
         {
-            _data = new Dictionary<DateTime, Dictionary<string, double>>();
-            if (!File.Exists(_path)) return;
-            foreach (var line in File.ReadAllLines(_path))
+            if (!File.Exists(_path)) { _loaded = true; return; }
+            var parsed = new Dictionary<DateTime, Dictionary<string, double>>();
+            foreach (var line in Storage.ReadAllLinesShared(_path))
             {
                 var parts = line.Split(',');
                 if (parts.Length < 3) continue;
@@ -399,10 +410,23 @@ namespace LoginTimer
                 if (string.IsNullOrEmpty(name)) continue;
                 if (!double.TryParse(parts[2].Trim(), NumberStyles.Any,
                         CultureInfo.InvariantCulture, out s)) continue;
-                if (!_data.ContainsKey(d.Date))
-                    _data[d.Date] = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
-                _data[d.Date][name] = s;
+                if (!parsed.ContainsKey(d.Date))
+                    parsed[d.Date] = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+                parsed[d.Date][name] = s;
             }
+            foreach (var day in parsed)
+            {
+                if (!_data.ContainsKey(day.Key))
+                    _data[day.Key] = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+                var target = _data[day.Key];
+                foreach (var app in day.Value)
+                {
+                    double cur;
+                    target.TryGetValue(app.Key, out cur);
+                    target[app.Key] = cur + app.Value;
+                }
+            }
+            _loaded = true;
         }
     }
 
@@ -615,7 +639,7 @@ namespace LoginTimer
             LogError(e.ExceptionObject.ToString());
         }
 
-        static void LogError(string msg)
+        internal static void LogError(string msg)
         {
             try
             {
@@ -627,22 +651,50 @@ namespace LoginTimer
         }
     }
 
+    // ── Shared file access ────────────────────────────────────────────────────
+    static class Storage
+    {
+        // File.ReadAllLines denies sharing with writers, so it fails while the
+        // CSV is open in Excel (or locked by a sync client). Excel keeps the
+        // file open for writing but lets others read it.
+        public static string[] ReadAllLinesShared(string path)
+        {
+            using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read,
+                                           FileShare.ReadWrite | FileShare.Delete))
+            using (var reader = new StreamReader(fs))
+            {
+                var lines = new List<string>();
+                string line;
+                while ((line = reader.ReadLine()) != null) lines.Add(line);
+                return lines.ToArray();
+            }
+        }
+    }
+
     // ── Storage: simple CSV  date,seconds ─────────────────────────────────────
     class DayData
     {
         readonly Dictionary<DateTime, double> _secs = new Dictionary<DateTime, double>();
         readonly string _path;
 
+        bool _loaded; // false → data.csv unreadable; Save() must not overwrite it
+
+        public bool Loaded { get { return _loaded; } }
+
         public DayData(string path)
         {
             _path = path;
-            Load();
+            try { Load(); }
+            catch (Exception ex) { Program.LogError("data.csv konnte nicht gelesen werden:\n" + ex); }
         }
 
+        // Adds the file's totals to what is already in memory (empty at
+        // startup; the time tracked so far when a failed load is retried).
         void Load()
         {
-            if (!File.Exists(_path)) return;
-            foreach (var line in File.ReadAllLines(_path))
+            if (!File.Exists(_path)) { _loaded = true; return; }
+            var parsed = new Dictionary<DateTime, double>();
+            foreach (var line in Storage.ReadAllLinesShared(_path))
             {
                 var parts = line.Split(',');
                 if (parts.Length < 2) continue;
@@ -652,12 +704,18 @@ namespace LoginTimer
                         CultureInfo.InvariantCulture, DateTimeStyles.None, out d)) continue;
                 if (!double.TryParse(parts[1].Trim(), NumberStyles.Any,
                         CultureInfo.InvariantCulture, out s)) continue;
-                _secs[d.Date] = s;
+                parsed[d.Date] = s;
             }
+            foreach (var kv in parsed)
+                _secs[kv.Key] = Get(kv.Key) + kv.Value;
+            _loaded = true;
         }
 
+        // Throws on failure (caller retries). While data.csv could not be read,
+        // retries the load first: writing now would wipe the stored history.
         public void Save()
         {
+            if (!_loaded) Load();
             var dir = Path.GetDirectoryName(_path);
             if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
             var lines = _secs
@@ -694,7 +752,7 @@ namespace LoginTimer
         System.Windows.Forms.Timer _timer;       // 30 s: checkpoint + icon update
         System.Windows.Forms.Timer _appTimer;    // 10 s: per-monitor app tracking
         System.Windows.Forms.Timer _updateTimer; // one-shot: silent update check after startup
-        Icon        _currentIcon;
+        Icon        _currentIcon; // wraps an HICON we own — free via DestroyOwnedIcon
         Bitmap      _iconBitmap;  // must stay alive while icon handle is in use
         OverlayForm _overlay;
         AnchorForm  _anchor;      // hidden window visible to Restart Manager / WixCloseApplications
@@ -702,6 +760,10 @@ namespace LoginTimer
         bool        _exiting;     // guard against re-entrant OnExit calls
         ColorScheme _colors;
         UpdateInfo  _pendingUpdate; // set by silent check; consumed by balloon click
+        DateTime    _lastAlive;     // last timer tick — detects sleep/hibernate gaps
+        bool        _saveFailing;   // log a save failure once, not every 30 s
+
+        static readonly TimeSpan MaxTickGap = TimeSpan.FromSeconds(60);
 
         public TrayApp()
         {
@@ -718,7 +780,8 @@ namespace LoginTimer
                 "LoginTimer", "apps.csv");
             _appTracker = new AppTracker(appDataPath);
 
-            _segStart = DateTime.Now;
+            _segStart  = DateTime.Now;
+            _lastAlive = _segStart.Value;
             // _syncCtx is captured lazily on the first timer tick (see OnAppTick),
             // because SynchronizationContext.Current is null here — Application.Run
             // installs the WinForms context only after the constructor returns.
@@ -736,6 +799,16 @@ namespace LoginTimer
 
             UpdateIcon();
             _tray.Visible = true;
+
+            if (!_data.Loaded || !_appTracker.Loaded)
+            {
+                _tray.BalloonTipTitle = "LoginTimer - Verlauf nicht lesbar";
+                _tray.BalloonTipText  =
+                    "Die Datendatei ist gesperrt oder beschaedigt (Details in error.log). " +
+                    "Die Zeit wird weiter gezaehlt und gespeichert, sobald die Datei lesbar ist.";
+                _tray.BalloonTipIcon  = ToolTipIcon.Warning;
+                _tray.ShowBalloonTip(10000);
+            }
 
             _overlay = new OverlayForm(_colors);
             _overlay.ContextMenuStrip = _tray.ContextMenuStrip;
@@ -775,6 +848,7 @@ namespace LoginTimer
 
         void OnAppTick(object sender, EventArgs e)
         {
+            Heartbeat();
             if (_segStart == null) return; // locked / disconnected
 
             // Lazy capture: Application.Run installs the WinForms sync context
@@ -802,7 +876,9 @@ namespace LoginTimer
 
         void OnSessionEnding(object sender, SessionEndingEventArgs e)
         {
-            CommitSegment();
+            // Save but keep counting: another app may still cancel the
+            // logoff/shutdown. If it goes through, OnExit commits the rest.
+            Checkpoint();
         }
 
         void OnSessionSwitch(object sender, SessionSwitchEventArgs e)
@@ -817,52 +893,74 @@ namespace LoginTimer
                      e.Reason == SessionSwitchReason.SessionLogon ||
                      e.Reason == SessionSwitchReason.RemoteConnect)
             {
+                Heartbeat();
                 if (_segStart == null)
                     _segStart = DateTime.Now;
             }
             UpdateIcon();
         }
 
-        // Autosave: commit elapsed, reset segment start to avoid double-count
+        // Timers do not fire while the machine sleeps or hibernates. A gap
+        // longer than MaxTickGap since the last timer tick means the time in
+        // between was not spent logged in: book the running segment up to the
+        // last sign of life and restart it now. Must run before any booking.
+        void Heartbeat()
+        {
+            var now = DateTime.Now;
+            if (_segStart != null && now - _lastAlive > MaxTickGap)
+            {
+                Accumulate(_lastAlive);
+                _segStart = now;
+            }
+            _lastAlive = now;
+        }
+
+        // Books _segStart..end into the per-day totals (split at midnight)
+        // and moves _segStart to end. In memory only — see SaveAll().
+        void Accumulate(DateTime end)
+        {
+            var start = _segStart.Value;
+            while (start < end)
+            {
+                var nextMidnight = start.Date.AddDays(1);
+                var chunkEnd = end < nextMidnight ? end : nextMidnight;
+                _data.Set(start.Date, _data.Get(start.Date) + (chunkEnd - start).TotalSeconds);
+                start = chunkEnd;
+            }
+            _segStart = start;
+        }
+
+        // Autosave: book elapsed time, keep the segment running
         void Checkpoint()
         {
+            Heartbeat();
             if (_segStart == null) return;
-            var now = DateTime.Now;
-
-            if (_segStart.Value.Date < now.Date)
-            {
-                var midnight = now.Date;
-                _data.Set(_segStart.Value.Date,
-                    _data.Get(_segStart.Value.Date) + (midnight - _segStart.Value).TotalSeconds);
-                _segStart = midnight;
-            }
-
-            var elapsed = (now - _segStart.Value).TotalSeconds;
-            _data.Set(now.Date, _data.Get(now.Date) + elapsed);
-            _data.Save();
-            _appTracker.Save();
-            _segStart = now;
+            Accumulate(DateTime.Now);
+            SaveAll();
         }
 
         // Final commit on lock / exit
         void CommitSegment()
         {
+            Heartbeat();
             if (_segStart == null) return;
-            var now = DateTime.Now;
-
-            if (_segStart.Value.Date < now.Date)
-            {
-                var midnight = now.Date;
-                _data.Set(_segStart.Value.Date,
-                    _data.Get(_segStart.Value.Date) + (midnight - _segStart.Value).TotalSeconds);
-                _segStart = midnight;
-            }
-
-            _data.Set(now.Date,
-                _data.Get(now.Date) + (now - _segStart.Value).TotalSeconds);
-            _data.Save();
-            _appTracker.Save();
+            Accumulate(DateTime.Now);
             _segStart = null;
+            SaveAll();
+        }
+
+        // Never throws: the in-memory totals are already booked, so a failed
+        // write (file open in Excel, sync client lock, ...) is simply retried
+        // on the next checkpoint. Logged once per failure streak.
+        void SaveAll()
+        {
+            Exception error = null;
+            try { _data.Save(); } catch (Exception ex) { error = ex; }
+            try { _appTracker.Save(); } catch (Exception ex) { if (error == null) error = ex; }
+            if (error == null) { _saveFailing = false; return; }
+            if (!_saveFailing)
+                Program.LogError("Speichern fehlgeschlagen, wird beim naechsten Checkpoint erneut versucht:\n" + error);
+            _saveFailing = true;
         }
 
         double TodaySeconds()
@@ -876,6 +974,7 @@ namespace LoginTimer
 
         void UpdateIcon()
         {
+            Heartbeat(); // drop a sleep gap before showing the live total
             var secs  = TodaySeconds();
             var label = FormatHM(secs);
             _tray.Text = "LoginTimer  " + label + " heute";
@@ -883,7 +982,7 @@ namespace LoginTimer
             var oldIcon = _currentIcon;
             _currentIcon = MakeIcon(label);
             _tray.Icon = _currentIcon;
-            if (oldIcon != null) oldIcon.Dispose();
+            DestroyOwnedIcon(oldIcon);
 
             if (_overlay != null) _overlay.SetTime(label);
         }
@@ -921,7 +1020,20 @@ namespace LoginTimer
             }
             if (_iconBitmap != null) _iconBitmap.Dispose();
             _iconBitmap = bmp;
+            // The HICON from GetHicon() is NOT owned by the Icon wrapper:
+            // Icon.Dispose() does not free it, so DestroyOwnedIcon must.
             return Icon.FromHandle(bmp.GetHicon());
+        }
+
+        [DllImport("user32.dll")]
+        static extern bool DestroyIcon(IntPtr hIcon);
+
+        static void DestroyOwnedIcon(Icon icon)
+        {
+            if (icon == null) return;
+            var handle = icon.Handle;
+            icon.Dispose();
+            DestroyIcon(handle);
         }
 
         ContextMenuStrip BuildMenu()
@@ -1117,6 +1229,7 @@ namespace LoginTimer
 
         void ShowHistory()
         {
+            Heartbeat();
             var snap = new Dictionary<DateTime, double>();
             foreach (var kv in _data.All())
                 snap[kv.Key] = kv.Value;
@@ -1158,8 +1271,9 @@ namespace LoginTimer
                 _anchor.Dispose();
                 _anchor = null;
             }
-            if (_currentIcon != null) _currentIcon.Dispose();
-            if (_iconBitmap  != null) _iconBitmap.Dispose();
+            DestroyOwnedIcon(_currentIcon);
+            _currentIcon = null;
+            if (_iconBitmap != null) _iconBitmap.Dispose();
         }
     }
 

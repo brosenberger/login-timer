@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **Tray icon broke after ~1 day of uptime** — every icon redraw (every 30 s, also while locked) leaked the `HICON` from `Bitmap.GetHicon()` (3 GDI objects); `Icon.Dispose()` does not free it. After ~28 h the per-process GDI limit was reached and every tick raised an error dialog. The old handle is now freed with `DestroyIcon`.
+- **Time counted twice while `data.csv` was locked** — if the file was open in Excel or locked by a sync client, the failed save skipped the segment reset, so each 30 s checkpoint booked the same interval again and raised an error dialog. Time is now booked in memory first; a failed save is logged once to `error.log` and retried on the next checkpoint.
+- **App did not start while `data.csv` was open in Excel** — the CSVs are now read with shared access. If a file is still unreadable, LoginTimer starts anyway, shows a warning balloon, does not overwrite the stored history, and merges the tracked time in once the file can be read again.
+- **Sleep / hibernate counted as logged-in time** — timers don't fire while the machine sleeps; a gap of more than 60 s since the last tick is now treated as a pause and not counted.
+- **Cancelled shutdown stopped tracking** — `SessionEnding` committed and ended the running segment; if another app cancelled the logoff, counting stayed off until the next lock/unlock. It now only saves and keeps counting.
+
 ---
 
 ## [1.2.1] — 2026-06-17
