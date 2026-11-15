@@ -18,7 +18,7 @@ Current version: **1.2.1**
 
 ```
 src/
-  LoginTimer.cs          Single-file application (~1 200 lines)
+  LoginTimer.cs          Single-file application (~2 000 lines)
 
 installer/
   LoginTimer.wxs         WiX 3.x MSI definition
@@ -105,7 +105,7 @@ All `@param` / `@return` in interface PHPDoc → not applicable (C# project).
 | `WindowHelper` | Static. Z-order walk via `GetTopWindow`/`GetWindow`; returns topmost visible non-minimised non-system window per monitor. PID cached per tick. |
 | `AppTracker` | In-memory `Dictionary<DateTime, Dictionary<string, double>>`. `RecordTick()`, `Save()`, `Load()`. CSV: `%AppData%\LoginTimer\apps.csv` |
 | `DayData` | Login-time storage. CSV: `%AppData%\LoginTimer\data.csv` (`yyyy-MM-dd,seconds`) |
-| `UpdateChecker` | Static. Queries GitHub `releases/latest` API on a ThreadPool thread, regex-parses `tag_name` + `LoginTimer.exe` asset URL/sha256 digest, compares against `Program.Version`. Forces TLS 1.2 (`SecurityProtocolType` 3072). Self-update: download next to EXE, verify digest, rename running EXE → `.old`, move new in place, relaunch with `--updated` (Main then waits up to 15 s for the mutex); `.old` cleanup retries on next start. |
+| `UpdateChecker` | Static. Queries GitHub `releases/latest` API on a ThreadPool thread, regex-parses `tag_name` + `LoginTimer.exe` asset URL/sha256 digest, compares against `Program.Version`. Forces TLS 1.2 (`SecurityProtocolType` 3072). Self-update: download next to EXE, verify digest (required — no digest or non-writable install folder → release page only), rename running EXE → `.old`, move new in place, relaunch with `--updated` (Main then waits up to 15 s for the mutex); `.old` cleanup retries on next start. |
 | `TrayApp` | `ApplicationContext`. Owns tray icon, 30 s timer, 10 s app timer, `OverlayForm`, `AnchorForm`. |
 | `OverlayForm` | Floating widget. `WS_EX_NOACTIVATE \| WS_EX_TOOLWINDOW`. `SetWindowPos(HWND_TOPMOST)` re-asserted every 1 s. Position saved on `LocationChanged`. |
 | `AnchorForm` | Hidden 1×1 window, `Text="LoginTimer"`, no `WS_EX_TOOLWINDOW`. Exists solely so Restart Manager and `util:CloseApplication` can identify the running process. |
@@ -130,7 +130,8 @@ All `@param` / `@return` in interface PHPDoc → not applicable (C# project).
 | `%AppData%\LoginTimer\data.csv` | `yyyy-MM-dd,seconds` |
 | `%AppData%\LoginTimer\apps.csv` | `yyyy-MM-dd,processname,seconds` |
 | `%AppData%\LoginTimer\overlay.pos` | `x,y` |
-| `%AppData%\LoginTimer\error.log` | Appended on unhandled exceptions |
+| `%AppData%\LoginTimer\error.log` | Appended on unhandled exceptions and failed loads/saves |
+| `%AppData%\LoginTimer\*.csv.bak` | Previous version of each CSV (written via `Storage.WriteAllLinesAtomic`) |
 
 ---
 

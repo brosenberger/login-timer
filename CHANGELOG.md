@@ -19,6 +19,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **MSI: validation re-enabled** — `light -sval` hid ICE38/ICE64 errors. The EXE component now uses an HKCU KeyPath, the install folder is removed on uninstall, and leftover self-update files (`LoginTimer.exe.old` / `.new`) are cleaned up. Component GUIDs regenerated (the old ones were hand-typed patterns); the UpgradeCode is unchanged, so upgrades from older versions still work.
 - **Fallback installer killed LoginTimer without saving** — it now sends `WM_CLOSE` (LoginTimer saves first) and only force-kills after 5 s, and only touches instances in the current Windows session (as admin it used to kill other users' instances too). Typo "Verkuepfung" fixed.
 - **`scripts\restart.bat` never relaunched the app** — it used `!ROOT!` without delayed expansion. It now also closes the running instance gracefully before the forced kill, and stops when the build fails.
+- **CSV could be left empty after a crash during a save** — `data.csv` and `apps.csv` are now written to a temp file and swapped in (`File.Replace`); the previous version is kept as `data.csv.bak` / `apps.csv.bak`.
+- **Self-update ran unverified downloads** — a release without a sha256 digest for `LoginTimer.exe` is no longer installed automatically; only the release page is offered. The same applies when the install folder is not writable (e.g. "for all users" install under Program Files), where the swap could never succeed.
+- **History window disappeared after "Farben…"** — it is now reopened with the new colors.
+- **Single-instance mutex** was created initially owned and then acquired again, so the one `ReleaseMutex` at exit never freed it; the restarted instance after a self-update only got it via `AbandonedMutexException`.
+
+### Changed
+- Days tab: column "+/- Vortag" renamed to "+/- letzter Tag" — it compares with the previous day that has data (Monday vs. Friday), not the calendar day before.
 
 ---
 

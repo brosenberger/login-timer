@@ -389,7 +389,7 @@ namespace LoginTimer
                     lines.Add(day.Key.ToString("yyyy-MM-dd") + "," +
                                app.Key + "," +
                                app.Value.ToString(CultureInfo.InvariantCulture));
-            File.WriteAllLines(_path, lines.ToArray());
+            Storage.WriteAllLinesAtomic(_path, lines);
         }
 
         // Adds the file's totals to what is already in memory (empty at
@@ -517,6 +517,11 @@ namespace LoginTimer
         /// </summary>
         public static void DownloadAndSwap(UpdateInfo info)
         {
+            // Never run an unverified download: no digest → manual update only.
+            if (info.Sha256 == null)
+                throw new InvalidOperationException(
+                    "Das Release enthaelt keine Pruefsumme fuer LoginTimer.exe.");
+
             var exePath = Application.ExecutablePath;
             var newPath = Path.Combine(Path.GetDirectoryName(exePath),
                                        "LoginTimer.exe.new");
@@ -529,8 +534,7 @@ namespace LoginTimer
                 wc.DownloadFile(info.ExeUrl, newPath);
             }
 
-            if (info.Sha256 != null &&
-                !string.Equals(Sha256Of(newPath), info.Sha256,
+            if (!string.Equals(Sha256Of(newPath), info.Sha256,
                                StringComparison.OrdinalIgnoreCase))
             {
                 try { File.Delete(newPath); } catch { }
@@ -542,6 +546,24 @@ namespace LoginTimer
             File.Move(exePath, oldPath);
             try { File.Move(newPath, exePath); }
             catch { File.Move(oldPath, exePath); throw; } // rollback
+        }
+
+        /// <summary>
+        /// False when the EXE folder is not writable for this user (e.g. a
+        /// "for all users" install under Program Files): self-update would
+        /// fail there, so only the manual download is offered.
+        /// </summary>
+        public static bool CanSelfUpdate()
+        {
+            var probe = Path.Combine(Path.GetDirectoryName(Application.ExecutablePath),
+                                     "LoginTimer.write-test");
+            try
+            {
+                File.WriteAllText(probe, "");
+                File.Delete(probe);
+                return true;
+            }
+            catch { return false; }
         }
 
         /// <summary>
@@ -584,7 +606,10 @@ namespace LoginTimer
         // CHANGELOG.md and README.md in sync (see AGENTS.md).
         public const string Version = "1.2.1";
 
-        static Mutex _mutex = new Mutex(true, "LoginTimerMutex_v1");
+        // Not initially owned: WaitOne in Main is the only acquisition, so the
+        // single ReleaseMutex at exit really frees it (the --updated instance
+        // gets it cleanly instead of via AbandonedMutexException).
+        static Mutex _mutex = new Mutex(false, "LoginTimerMutex_v1");
 
         static readonly string ErrorLog =
             System.IO.Path.Combine(
@@ -669,6 +694,18 @@ namespace LoginTimer
                 return lines.ToArray();
             }
         }
+
+        // Write to a temp file, then swap it in. A crash or power loss during
+        // the write can no longer leave the CSV empty or cut off (which the
+        // next save would then make permanent). Keeps the previous version
+        // as <file>.bak for manual recovery.
+        public static void WriteAllLinesAtomic(string path, IEnumerable<string> lines)
+        {
+            var tmp = path + ".tmp";
+            File.WriteAllLines(tmp, lines);
+            if (File.Exists(path)) File.Replace(tmp, path, path + ".bak");
+            else File.Move(tmp, path);
+        }
     }
 
     // ── Storage: simple CSV  date,seconds ─────────────────────────────────────
@@ -722,7 +759,7 @@ namespace LoginTimer
                 .OrderBy(kv => kv.Key)
                 .Select(kv => kv.Key.ToString("yyyy-MM-dd") + "," +
                               kv.Value.ToString(CultureInfo.InvariantCulture));
-            File.WriteAllLines(_path, lines.ToArray());
+            Storage.WriteAllLinesAtomic(_path, lines);
         }
 
         public double Get(DateTime day)
@@ -1121,9 +1158,10 @@ namespace LoginTimer
 
         void OfferUpdate(UpdateInfo info)
         {
-            if (info.ExeUrl == null)
+            if (info.ExeUrl == null || info.Sha256 == null || !UpdateChecker.CanSelfUpdate())
             {
-                // Release ships no LoginTimer.exe asset → manual download only.
+                // No verifiable EXE asset, or install folder not writable
+                // → manual download only.
                 var a = MessageBox.Show(
                     string.Format(
                         "Version {0} ist verfuegbar (installiert: {1}).\n\n" +
@@ -1219,11 +1257,12 @@ namespace LoginTimer
                 UpdateIcon();
                 _overlay.ApplyColors(_colors);
 
-                // Close any open history windows; they'll reopen with new colors.
+                // Rebuild an open history window with the new colors.
                 // Snapshot first — Close() modifies the OpenForms collection.
                 var toClose = Application.OpenForms.Cast<Form>()
                                          .OfType<HistoryForm>().ToList();
                 foreach (var hf in toClose) hf.Close();
+                if (toClose.Count > 0) ShowHistory();
             }
         }
 
@@ -1674,8 +1713,9 @@ namespace LoginTimer
             var bar = MakeBar("Heute:   " + FormatHM(todaySec));
 
             var grid = MakeGrid(
-                new string[] { "Datum",  "Tag", "Dauer", "Stunden", "+/- Vortag" },
-                new int[]    { 108,       48,    108,     88,         88          });
+                // Compared with the previous day that has data (Mon → Fri).
+                new string[] { "Datum",  "Tag", "Dauer", "Stunden", "+/- letzter Tag" },
+                new int[]    { 108,       48,    108,     88,         120              });
 
             var sorted = _snap.OrderByDescending(kv => kv.Key).Take(60).ToList();
             for (int i = 0; i < sorted.Count; i++)
