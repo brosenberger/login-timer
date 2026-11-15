@@ -1,6 +1,6 @@
 # LoginTimer
 
-**Version 1.3.0**
+**Version 1.3.1**
 
 Windows system tray app that tracks your logged-in time per day — automatically pauses when the screen is locked.
 

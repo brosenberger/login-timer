@@ -729,7 +729,7 @@ namespace LoginTimer
         // Single source of truth for the app version.
         // Release checklist: keep installer/LoginTimer.wxs Version="x.y.z.0",
         // CHANGELOG.md and README.md in sync (see AGENTS.md).
-        public const string Version = "1.3.0";
+        public const string Version = "1.3.1";
 
         // Not initially owned: WaitOne in Main is the only acquisition, so the
         // single ReleaseMutex at exit really frees it (the --updated instance
