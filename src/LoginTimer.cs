@@ -1322,9 +1322,10 @@ namespace LoginTimer
             Size            = new Size(88, 36);
             Cursor          = Cursors.SizeAll;
 
-            var screen = Screen.PrimaryScreen.WorkingArea;
-            Location = new Point(screen.Right - Width - 8, screen.Bottom - Height - 4);
+            Location = DefaultLocation();
             LoadPosition();
+            EnsureOnScreen();
+            SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
 
             var lbl = new Label();
             lbl.Name      = "lblTime";
@@ -1366,6 +1367,35 @@ namespace LoginTimer
             if (!Visible || !IsHandleCreated) return;
             SetWindowPos(Handle, HWND_TOPMOST, 0, 0, 0, 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+
+        Point DefaultLocation()
+        {
+            var screen = Screen.PrimaryScreen.WorkingArea;
+            return new Point(screen.Right - Width - 8, screen.Bottom - Height - 4);
+        }
+
+        // Saved position may point at a monitor that is gone (undocked
+        // laptop, changed layout): fall back to the default corner.
+        void EnsureOnScreen()
+        {
+            var center = new Point(Left + Width / 2, Top + Height / 2);
+            if (!Screen.AllScreens.Any(s => s.WorkingArea.Contains(center)))
+                Location = DefaultLocation();
+        }
+
+        void OnDisplaySettingsChanged(object sender, EventArgs e)
+        {
+            if (IsDisposed) return;
+            if (InvokeRequired) { BeginInvoke(new Action(EnsureOnScreen)); return; }
+            EnsureOnScreen();
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            // Static event: unsubscribe or the form is never collected.
+            if (disposing) SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
+            base.Dispose(disposing);
         }
 
         void OnWidgetDoubleClick(object sender, EventArgs e)
@@ -1689,15 +1719,12 @@ namespace LoginTimer
                 .OrderByDescending(g => g.Key)
                 .Take(16).ToList();
 
-            var cal = CultureInfo.InvariantCulture.Calendar;
             for (int i = 0; i < groups.Count; i++)
             {
                 var g     = groups[i];
                 double total = g.Sum(kv => kv.Value);
                 int n     = g.Count();
-                var rep   = g.OrderBy(kv => kv.Key).First().Key;
-                int week  = cal.GetWeekOfYear(rep, CalendarWeekRule.FirstFourDayWeek, DayOfWeek.Monday);
-                string lbl = string.Format("KW {0:D2}  {1}", week, rep.Year);
+                string lbl = string.Format("KW {0:D2}  {1}", g.Key % 100, g.Key / 100);
 
                 string pct = "-";
                 if (i + 1 < groups.Count)
@@ -1801,11 +1828,15 @@ namespace LoginTimer
             return tp;
         }
 
-        static int IsoWeekKey(DateTime d)
+        // ISO 8601 week as yyyyww. Calendar.GetWeekOfYear is not ISO-conform
+        // (Dec 29-31 can get week 53 instead of week 1), and the week-based year
+        // differs from the calendar year around New Year. ISO rule: a week
+        // belongs to the year that contains its Thursday.
+        internal static int IsoWeekKey(DateTime d)
         {
-            var cal  = CultureInfo.InvariantCulture.Calendar;
-            int week = cal.GetWeekOfYear(d, CalendarWeekRule.FirstFourDayWeek, DayOfWeek.Monday);
-            return d.Year * 100 + week;
+            int daysSinceMonday = ((int)d.DayOfWeek + 6) % 7;
+            var thursday = d.Date.AddDays(3 - daysSinceMonday);
+            return thursday.Year * 100 + (thursday.DayOfYear - 1) / 7 + 1;
         }
 
         static string FormatHM(double seconds)

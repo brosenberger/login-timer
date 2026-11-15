@@ -46,7 +46,7 @@ if !ERRORLEVEL! neq 0 (
 )
 
 echo Schritt 2/2: light.exe
-"!WIX_BIN!\light.exe" "LoginTimer.wixobj" -ext WixUIExtension -ext WixUtilExtension -out "..\dist\LoginTimer.msi" -nologo -sval
+"!WIX_BIN!\light.exe" "LoginTimer.wixobj" -ext WixUIExtension -ext WixUtilExtension -out "..\dist\LoginTimer.msi" -nologo
 if !ERRORLEVEL! neq 0 (
     popd
     echo [FEHLER] light fehlgeschlagen

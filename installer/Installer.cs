@@ -45,6 +45,45 @@ namespace LoginTimerInstaller
             }
         }
 
+        // ── Laufende Instanz sauber beenden ─────────────────────────────────
+        // WM_CLOSE an alle Top-Level-Fenster des Prozesses (wie MSI
+        // util:CloseApplication): LoginTimer speichert dann Zeit + Position.
+        // Kill nur als Fallback. Nur die eigene Sitzung — als Admin wuerde
+        // GetProcessesByName sonst auch Instanzen anderer Benutzer treffen.
+        delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+        [DllImport("user32.dll")]
+        static extern bool EnumWindows(EnumWindowsProc cb, IntPtr lParam);
+        [DllImport("user32.dll")]
+        static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+        [DllImport("user32.dll")]
+        static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+        const uint WM_CLOSE = 0x0010;
+
+        static void CloseRunningInstances()
+        {
+            int session = Process.GetCurrentProcess().SessionId;
+            foreach (var proc in Process.GetProcessesByName("LoginTimer"))
+            {
+                using (proc)
+                {
+                    if (proc.SessionId != session) continue;
+                    uint target = (uint)proc.Id;
+                    EnumWindows(delegate(IntPtr hWnd, IntPtr lp)
+                    {
+                        uint pid;
+                        GetWindowThreadProcessId(hWnd, out pid);
+                        if (pid == target) PostMessage(hWnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+                        return true;
+                    }, IntPtr.Zero);
+                    try
+                    {
+                        if (!proc.WaitForExit(5000)) { proc.Kill(); proc.WaitForExit(3000); }
+                    }
+                    catch { }
+                }
+            }
+        }
+
         static bool IsAdmin()
         {
             var id = WindowsIdentity.GetCurrent();
@@ -164,7 +203,7 @@ namespace LoginTimerInstaller
 
             // Optionen
             _chkDesk = new CheckBox();
-            _chkDesk.Text = "Desktop-Verkuepfung erstellen";
+            _chkDesk.Text = "Desktop-Verknuepfung erstellen";
             _chkDesk.Location = new Point(pad, y);
             _chkDesk.Width = 300;
             _chkDesk.Checked = true;
@@ -229,16 +268,13 @@ namespace LoginTimerInstaller
                 Directory.CreateDirectory(destDir);
                 string destExe = Path.Combine(destDir, "LoginTimer.exe");
 
-                // Laufende Instanz beenden
-                foreach (var proc in System.Diagnostics.Process.GetProcessesByName("LoginTimer"))
-                {
-                    try { proc.Kill(); proc.WaitForExit(3000); } catch { }
-                }
+                // Laufende Instanz beenden (speichert vorher)
+                CloseRunningInstances();
 
                 // EXE kopieren
                 File.Copy(_srcExe, destExe, overwrite: true);
 
-                // Autostart-Verkuepfung erstellen
+                // Autostart-Verknuepfung erstellen
                 string autostartDir = Path.Combine(
                     Environment.GetFolderPath(
                         systemWide
@@ -247,7 +283,7 @@ namespace LoginTimerInstaller
                 string lnkAutostart = Path.Combine(autostartDir, "LoginTimer.lnk");
                 CreateShortcut(lnkAutostart, destExe, "LoginTimer – Eingeloggte Zeit verfolgen");
 
-                // Desktop-Verkuepfung (optional)
+                // Desktop-Verknuepfung (optional)
                 if (_chkDesk.Checked)
                 {
                     string lnkDesk = Path.Combine(
@@ -264,7 +300,7 @@ namespace LoginTimerInstaller
                 MessageBox.Show(
                     "LoginTimer wurde erfolgreich installiert!\n\n" +
                     "Installiert in:\n  " + destDir + "\n\n" +
-                    "Autostart-Verkuepfung:\n  " + lnkAutostart + "\n\n" +
+                    "Autostart-Verknuepfung:\n  " + lnkAutostart + "\n\n" +
                     "LoginTimer laeuft jetzt im Hintergrund.",
                     "Installation abgeschlossen",
                     MessageBoxButtons.OK,

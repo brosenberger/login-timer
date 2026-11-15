@@ -13,6 +13,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **App did not start while `data.csv` was open in Excel** — the CSVs are now read with shared access. If a file is still unreadable, LoginTimer starts anyway, shows a warning balloon, does not overwrite the stored history, and merges the tracked time in once the file can be read again.
 - **Sleep / hibernate counted as logged-in time** — timers don't fire while the machine sleeps; a gap of more than 60 s since the last tick is now treated as a pause and not counted.
 - **Cancelled shutdown stopped tracking** — `SessionEnding` committed and ended the running segment; if another app cancelled the logoff, counting stayed off until the next lock/unlock. It now only saves and keeps counting.
+- **Weeks tab wrong around New Year** — weeks were grouped with `Calendar.GetWeekOfYear`, which is not ISO 8601, and keyed by calendar year: e.g. Jan 1–3 2027 showed as a separate "KW 53 2027" row sorted on top. Weeks now follow ISO 8601 (the week belongs to the year of its Thursday).
+- **Widget invisible after a monitor change** — a saved position on a disconnected monitor is now reset to the bottom-right corner of the primary screen, at startup and when the display layout changes.
+- **MSI: desktop shortcut was off by default** — the feature had `Level="2"` (above the default `INSTALLLEVEL` 1); it is now on by default as intended.
+- **MSI: validation re-enabled** — `light -sval` hid ICE38/ICE64 errors. The EXE component now uses an HKCU KeyPath, the install folder is removed on uninstall, and leftover self-update files (`LoginTimer.exe.old` / `.new`) are cleaned up. Component GUIDs regenerated (the old ones were hand-typed patterns); the UpgradeCode is unchanged, so upgrades from older versions still work.
+- **Fallback installer killed LoginTimer without saving** — it now sends `WM_CLOSE` (LoginTimer saves first) and only force-kills after 5 s, and only touches instances in the current Windows session (as admin it used to kill other users' instances too). Typo "Verkuepfung" fixed.
+- **`scripts\restart.bat` never relaunched the app** — it used `!ROOT!` without delayed expansion. It now also closes the running instance gracefully before the forced kill, and stops when the build fails.
 
 ---
 

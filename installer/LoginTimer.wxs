@@ -42,8 +42,8 @@
       <ComponentRef Id="MainExecutable"    />
       <ComponentRef Id="AutostartShortcut" />
 
-      <!-- Optional: Desktop-Verknuepfung (Standard: an) -->
-      <Feature Id="DesktopFeature" Title="Desktop-Verkn&#252;pfung" Level="2"
+      <!-- Optional: Desktop-Verknuepfung (Standard: an; Level 1 = INSTALLLEVEL) -->
+      <Feature Id="DesktopFeature" Title="Desktop-Verkn&#252;pfung" Level="1"
                Description="Verkn&#252;pfung auf dem Desktop erstellen.">
         <ComponentRef Id="DesktopShortcut" />
       </Feature>
@@ -88,15 +88,24 @@
   <!-- ── Komponenten ────────────────────────────────────────────────────── -->
   <Fragment>
 
-    <!-- LoginTimer.exe -->
+    <!-- LoginTimer.exe
+         Per-user profile location: ICE38 requires an HKCU KeyPath, ICE64 a
+         RemoveFolder. RemoveFile also cleans up leftovers of the EXE
+         self-update (.old = previous EXE, .new = aborted download). -->
     <Component Id="MainExecutable" Directory="INSTALLFOLDER"
-               Guid="{A2B3C4D5-E6F7-8901-A2B3-C4D5E6F78901}">
-      <File Id="LoginTimerEXE" Source="..\dist\LoginTimer.exe" KeyPath="yes" />
+               Guid="{8F84EB32-C125-4C8F-AAB1-34F97E854510}">
+      <File Id="LoginTimerEXE" Source="..\dist\LoginTimer.exe" />
+      <RemoveFile Id="RemoveOldExe" Name="LoginTimer.exe.old" On="both" />
+      <RemoveFile Id="RemoveNewExe" Name="LoginTimer.exe.new" On="both" />
+      <RemoveFolder Id="RemoveInstallFolder" On="uninstall" />
+      <RegistryValue Root="HKCU"
+                     Key="Software\brosenberger\LoginTimer"
+                     Name="Installed" Type="integer" Value="1" KeyPath="yes" />
     </Component>
 
     <!-- Autostart-Verknuepfung im Startup-Ordner -->
     <Component Id="AutostartShortcut" Directory="StartupFolder"
-               Guid="{B3C4D5E6-F7A8-9012-B3C4-D5E6F7A89012}">
+               Guid="{7FF2F68E-A48A-4177-9A10-A5A9160545D0}">
       <Shortcut Id="AutostartSC"
                 Name="LoginTimer"
                 Description="LoginTimer – Eingeloggte Zeit verfolgen"
@@ -110,7 +119,7 @@
 
     <!-- Desktop-Verknuepfung -->
     <Component Id="DesktopShortcut" Directory="DesktopFolder"
-               Guid="{C4D5E6F7-A8B9-0123-C4D5-E6F7A8B90123}">
+               Guid="{65E099DB-2EB0-4AE7-9D30-C03E57F2CD6D}">
       <Shortcut Id="DesktopSC"
                 Name="LoginTimer"
                 Description="LoginTimer starten"

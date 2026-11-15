@@ -186,6 +186,7 @@ Also update the version line in `README.md` (`**Version x.y.z**`).
 - **Sleep detection** — `TrayApp.Heartbeat()` treats a gap > `MaxTickGap` (60 s) since the last timer tick as sleep/hibernate. Call it before booking time (`Checkpoint`, `CommitSegment` and the display paths already do).
 - **Saving** — `DayData.Save` / `AppTracker.Save` throw; `TrayApp.SaveAll()` catches, logs once and retries on the next checkpoint. While a CSV could not be loaded, `Save` retries the load first and never overwrites the file blind.
 - **`WS_EX_NOACTIVATE`** on `OverlayForm` prevents focus steal but also means the widget cannot receive keyboard input — intentional.
+- **MSI validation is on** — `light.exe` runs without `-sval`; fix ICE errors instead of suppressing them. The expected ICE91 warning (per-user-only package) is harmless.
 - **`build_msi.bat` uses `pushd`** — candle/light are run from `installer\` so relative paths in the WXS (`Source="..\dist\LoginTimer.exe"`, `license.rtf`) resolve correctly. The `.wixpdb` is emitted next to the MSI output (`dist\`) not next to the WXS, so cleanup must target `"..\dist\LoginTimer.wixpdb"`.
 - **`NOPAUSE` env var** — set to `1` by `build-all.bat` before calling sub-scripts. Sub-scripts guard all `pause` calls with `if not defined NOPAUSE`.
 - **PowerShell `Compress-Archive` in bat** — must be on a single line inside `-Command "…"`. `^` line continuation inside a quoted string passed to another process mangles the command.
